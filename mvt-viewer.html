@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>MVT Viewer</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ol@v10.3.1/ol.css">
+    <style>
+        body { margin: 0; display: flex; }
+        #map { flex: 1; height: 100vh; }
+        #sidebar { width: 400px; height: 100vh; overflow-y: auto; padding: 10px; box-sizing: border-box; }
+        #layersFileInput { width: 100%; margin-bottom: 10px; }
+        #gridToggle { margin-bottom: 10px; }
+        .layer-item { display: grid; grid-template-columns: auto 1fr; align-items: center; }
+        .property { display: flex; }
+        .key { font-weight: bold; width: 40%; }
+        .value { width: 60%; }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    <div id="sidebar">
+        <input type="text" id="layersFileInput" value="/Projects/reearth-flow-mvt-test/build/13382/output_list">
+        <div id="gridToggle">
+            <label><input type="checkbox" id="showGrid"> Show Tile Grid</label>
+        </div>
+        <div id="layersSection">
+            <div id="layersList"></div>
+        </div>
+        <h2>Features <span id="featureCount"></span></h2>
+        <div id="features">Select a layer and drag to select features</div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/ol@v10.6.1/dist/ol.js"></script>
+    <script>
+        // Predefined colors for layers (all with lightness < 0.5 for visibility)
+        const LAYER_COLORS = [
+            { color: 'rgba(0, 100, 180, 0.8)', fill: 'rgba(0, 100, 180, 0.3)', text: '#0064b4' },
+            { color: 'rgba(200, 60, 0, 0.8)', fill: 'rgba(200, 60, 0, 0.3)', text: '#c83c00' },
+            { color: 'rgba(0, 130, 70, 0.8)', fill: 'rgba(0, 130, 70, 0.3)', text: '#008246' },
+            { color: 'rgba(150, 0, 150, 0.8)', fill: 'rgba(150, 0, 150, 0.3)', text: '#960096' },
+            { color: 'rgba(180, 120, 0, 0.8)', fill: 'rgba(180, 120, 0, 0.3)', text: '#b47800' },
+            { color: 'rgba(0, 70, 140, 0.8)', fill: 'rgba(0, 70, 140, 0.3)', text: '#00468c' },
+            { color: 'rgba(160, 70, 0, 0.8)', fill: 'rgba(160, 70, 0, 0.3)', text: '#a04600' },
+            { color: 'rgba(50, 120, 50, 0.8)', fill: 'rgba(50, 120, 50, 0.3)', text: '#327832' }
+        ];
+
+        let layerIdCounter = 0;
+        const layers = new Map(); // Map of layer ID to { olLayer, color, urlInput }
+        let lastSelectionExtent = null; // Store the last selection extent
+
+        const highlightSource = new ol.source.Vector();
+        const highlightLayer = new ol.layer.Vector({
+            source: highlightSource,
+            style: new ol.style.Style({
+                fill: new ol.style.Fill({ color: 'rgba(255, 255, 0, 0.4)' }),
+                stroke: new ol.style.Stroke({ color: 'rgba(255, 0, 0, 0.8)', width: 2 })
+            })
+        });
+
+        const selectSource = new ol.source.Vector();
+        const selectLayer = new ol.layer.Vector({
+            source: selectSource,
+            style: new ol.style.Style({
+                fill: new ol.style.Fill({ color: 'rgba(0, 0, 255, 0.1)' }),
+                stroke: new ol.style.Stroke({ color: 'rgba(0, 0, 255, 0.5)', width: 2, lineDash: [5, 5] })
+            })
+        });
+
+        const osmSource = new ol.source.OSM();
+        const tileDebugLayer = new ol.layer.Tile({
+            source: new ol.source.TileDebug({
+                tileGrid: osmSource.getTileGrid(),
+                projection: osmSource.getProjection()
+            }),
+            visible: false
+        });
+
+        const map = new ol.Map({
+            target: 'map',
+            layers: [new ol.layer.Tile({ source: osmSource }), highlightLayer, selectLayer, tileDebugLayer],
+            view: new ol.View({ center: ol.proj.fromLonLat([139.7, 35.7]), zoom: 8 }),
+            interactions: []
+        });
+
+        // Function to create a new layer
+        function createLayer(url, colorIndex) {
+            const layerId = layerIdCounter++;
+            const color = LAYER_COLORS[colorIndex % LAYER_COLORS.length];
+
+            const olLayer = new ol.layer.VectorTile({
+                source: new ol.source.VectorTile({
+                    format: new ol.format.MVT({
+                        featureClass: ol.Feature
+                    }),
+                    url: url
+                }),
+                style: feature => {
+                    let geom = feature.getGeometry();
+                    let geomType = geom ? geom.getType() : 'null';
+
+                    if (geomType === 'LineString' || geomType === 'MultiLineString') {
+                        return new ol.style.Style({
+                            stroke: new ol.style.Stroke({
+                                color: color.color,
+                                width: 2
+                            })
+                        });
+                    }
+
+                    return new ol.style.Style({
+                        fill: new ol.style.Fill({ color: color.fill }),
+                        stroke: new ol.style.Stroke({ color: color.color, width: 1 })
+                    });
+                }
+            });
+
+            // Insert layer before highlight and select layers
+            const layers = map.getLayers();
+            layers.insertAt(layers.getLength() - 2, olLayer);
+
+            return { layerId, olLayer, color };
+        }
+
+        // Function to add layer UI
+        function addLayerUI(layerId, url, color, visible = true) {
+            const layerItem = document.createElement('div');
+            layerItem.className = 'layer-item';
+            layerItem.id = `layer-${layerId}`;
+
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.checked = visible;
+            checkbox.addEventListener('change', () => {
+                const layerData = layers.get(layerId);
+                if (layerData) {
+                    layerData.olLayer.setVisible(checkbox.checked);
+                    if (checkbox.checked) {
+                        // Force layer to update tiles at current resolution
+                        layerData.olLayer.changed();
+                    }
+                }
+                // Reapply last selection if exists
+                if (lastSelectionExtent) {
+                    applySelection(lastSelectionExtent);
+                }
+            });
+
+            const urlInput = document.createElement('input');
+            urlInput.type = 'text';
+            urlInput.value = url;
+            urlInput.placeholder = 'Tile URL';
+            urlInput.style.color = color.text;
+            urlInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') {
+                    const layerData = layers.get(layerId);
+                    if (layerData) {
+                        layerData.olLayer.setSource(new ol.source.VectorTile({
+                            format: new ol.format.MVT({ featureClass: ol.Feature }),
+                            url: e.target.value
+                        }));
+                    }
+                }
+            });
+
+            layerItem.appendChild(checkbox);
+            layerItem.appendChild(urlInput);
+
+            document.getElementById('layersList').appendChild(layerItem);
+
+            return urlInput;
+        }
+
+        // Initialize with two layers
+        const initialUrls = [
+            '/Projects/flowutils/build/output/trk_lod0/{z}/{x}/{y}.pbf',
+            '/Projects/flowutils/build/fme/trk_lod0/{z}/{x}/{y}.pbf'
+        ];
+
+        initialUrls.forEach((url, index) => {
+            const { layerId, olLayer, color } = createLayer(url, index);
+            const urlInput = addLayerUI(layerId, url, color, true);
+            layers.set(layerId, { olLayer, color, urlInput });
+            olLayer.setVisible(true);
+        });
+
+        // Toggle tile grid visibility
+        document.getElementById('showGrid').addEventListener('change', (e) => {
+            tileDebugLayer.setVisible(e.target.checked);
+        });
+
+        map.addInteraction(new ol.interaction.DragPan({ condition: evt => evt.originalEvent.button === 1 && !evt.originalEvent.ctrlKey }));
+
+        let startY = null;
+        let startZoom = null;
+        map.getViewport().addEventListener('mousedown', e => {
+            if (e.button === 1 && e.ctrlKey) {
+                e.preventDefault();
+                startY = e.clientY;
+                startZoom = map.getView().getZoom();
+            }
+        });
+        map.getViewport().addEventListener('mousemove', e => {
+            if (startY !== null && e.buttons === 4) {
+                const delta = (startY - e.clientY) * 0.01;
+                map.getView().setZoom(startZoom + delta);
+            }
+        });
+        map.getViewport().addEventListener('mouseup', e => {
+            if (e.button === 1) startY = null;
+        });
+        document.getElementById('map').addEventListener('contextmenu', e => e.preventDefault());
+
+        let startCoord = null;
+
+        // Load layers from file
+        document.getElementById('layersFileInput').addEventListener('keypress', async (e) => {
+            if (e.key === 'Enter') {
+                const fileUrl = e.target.value.trim();
+                if (!fileUrl) return;
+
+                try {
+                    const response = await fetch(fileUrl);
+                    const text = await response.text();
+
+                    // Parse lines, filter comments and empty lines
+                    const urls = text.split('\n')
+                        .map(line => line.trim())
+                        .filter(line => line && !line.startsWith('#'));
+
+                    // Resolve relative paths based on output_list location
+                    const baseUrl = fileUrl.substring(0, fileUrl.lastIndexOf('/') + 1);
+                    const resolvedUrls = urls.map(url => {
+                        if (url.startsWith('/') || url.startsWith('http://') || url.startsWith('https://')) {
+                            return url;
+                        }
+                        return baseUrl + url;
+                    });
+
+                    // Clear existing layers
+                    layers.forEach((layerData, layerId) => {
+                        map.removeLayer(layerData.olLayer);
+                        document.getElementById(`layer-${layerId}`).remove();
+                    });
+                    layers.clear();
+
+                    // Add new layers
+                    resolvedUrls.forEach((url, index) => {
+                        const { layerId, olLayer, color } = createLayer(url, index);
+                        const urlInput = addLayerUI(layerId, url, color, true);
+                        layers.set(layerId, { olLayer, color, urlInput });
+                        olLayer.setVisible(true);
+                    });
+                } catch (error) {
+                    console.error('Failed to load layers file:', error);
+                    alert('Failed to load layers file: ' + error.message);
+                }
+            }
+        });
+
+        map.on('pointerdown', evt => {
+            if (evt.originalEvent.button === 0) {
+                startCoord = evt.coordinate;
+                selectSource.clear();
+            }
+        });
+
+        map.on('pointerdrag', evt => {
+            if (startCoord && evt.originalEvent.buttons === 1) {
+                const extent = [
+                    Math.min(startCoord[0], evt.coordinate[0]),
+                    Math.min(startCoord[1], evt.coordinate[1]),
+                    Math.max(startCoord[0], evt.coordinate[0]),
+                    Math.max(startCoord[1], evt.coordinate[1])
+                ];
+                selectSource.clear();
+                const poly = ol.geom.Polygon.fromExtent(extent);
+                selectSource.addFeature(new ol.Feature(poly));
+            }
+        });
+
+        // Function to apply selection to all visible layers
+        function applySelection(extent) {
+            const extentGeom = ol.geom.Polygon.fromExtent(extent);
+            const features = [];
+
+            const centerCoord = [(extent[0] + extent[2]) / 2, (extent[1] + extent[3]) / 2];
+            const centerPixel = map.getPixelFromCoordinate(centerCoord);
+
+            const minPixel = map.getPixelFromCoordinate([extent[0], extent[1]]);
+            const maxPixel = map.getPixelFromCoordinate([extent[2], extent[3]]);
+            const width = Math.abs(maxPixel[0] - minPixel[0]);
+            const height = Math.abs(maxPixel[1] - minPixel[1]);
+            const hitTolerance = Math.sqrt(width * width + height * height) / 2;
+
+            // Get all visible layers
+            const visibleLayers = Array.from(layers.values())
+                .map(data => data.olLayer)
+                .filter(layer => layer.getVisible());
+
+            if (visibleLayers.length === 0) {
+                return;
+            }
+
+            map.forEachFeatureAtPixel(centerPixel, (f) => {
+                const geom = f.getGeometry();
+                if (geom && extentGeom.intersectsExtent(geom.getExtent())) {
+                    features.push(f);
+                }
+            }, { layerFilter: (l) => visibleLayers.includes(l), hitTolerance });
+
+            highlightSource.clear();
+            features.forEach(f => highlightSource.addFeature(f.clone()));
+
+            const html = features.length ? features.map((f, i) => {
+                const geom = f.getGeometry();
+                const geomType = geom ? geom.getType() : 'Unknown';
+
+                // Calculate tile coordinates (z/x/y) for this feature
+                const extent = geom ? geom.getExtent() : null;
+                let tileInfo = '';
+                if (extent) {
+                    const center = [(extent[0] + extent[2]) / 2, (extent[1] + extent[3]) / 2];
+                    const zoom = Math.floor(map.getView().getZoom());
+                    const tileCoord = osmSource.getTileGrid().getTileCoordForCoordAndZ(center, zoom);
+                    if (tileCoord) {
+                        tileInfo = `<div><strong>Tile:</strong> ${tileCoord[0]}/${tileCoord[1]}/${tileCoord[2]}</div>`;
+                    }
+                }
+
+                // Get geometry data in tile coordinates (0-1 range)
+                let geomData = 'null';
+                if (geom) {
+                    const extent = geom.getExtent();
+                    const center = [(extent[0] + extent[2]) / 2, (extent[1] + extent[3]) / 2];
+                    const zoom = Math.floor(map.getView().getZoom());
+                    const tileCoord = osmSource.getTileGrid().getTileCoordForCoordAndZ(center, zoom);
+
+                    if (tileCoord) {
+                        const tileExtent = osmSource.getTileGrid().getTileCoordExtent(tileCoord);
+                        const [minX, minY, maxX, maxY] = tileExtent;
+                        const tileWidth = maxX - minX;
+                        const tileHeight = maxY - minY;
+
+                        const coords = geom.getCoordinates();
+                        const convertToTileCoords = (coord) => {
+                            if (typeof coord[0] === 'number') {
+                                // Convert Web Mercator to tile coordinates (0-1)
+                                const x = (coord[0] - minX) / tileWidth;
+                                const y = (coord[1] - minY) / tileHeight;
+                                return [x.toFixed(6), y.toFixed(6)].map(Number);
+                            }
+                            return coord.map(c => convertToTileCoords(c));
+                        };
+
+                        const tileCoords = convertToTileCoords(coords);
+                        const formatCoords = (c, depth = 0) => {
+                            if (typeof c[0] === 'number') {
+                                return '  '.repeat(depth) + JSON.stringify(c);
+                            }
+                            const indent = '  '.repeat(depth);
+                            const items = c.map(item => formatCoords(item, depth + 1)).join(',\n');
+                            return `${indent}[\n${items}\n${indent}]`;
+                        };
+                        geomData = formatCoords(tileCoords);
+                    }
+                }
+
+                const props = Object.entries(f.getProperties())
+                    .filter(([k]) => k !== 'geometry')
+                    .map(([k, v]) => `<div class="property"><div class="key">${k}</div><div class="value">${v}</div></div>`)
+                    .join('');
+
+                return `<div class="feature">
+                    <h3>Feature ${i + 1} (${geomType})</h3>
+                    ${tileInfo}
+                    <details>
+                        <summary>Geometry</summary>
+                        <pre>${geomData}</pre>
+                    </details>
+                    <hr>
+                    ${props}
+                </div>`;
+            }).join('') : 'No features found';
+
+            document.getElementById('features').innerHTML = html;
+            document.getElementById('featureCount').textContent = features.length ? `(${features.length})` : '';
+        }
+
+        map.on('pointerup', evt => {
+            if (startCoord && evt.originalEvent.button === 0) {
+                const extent = [
+                    Math.min(startCoord[0], evt.coordinate[0]),
+                    Math.min(startCoord[1], evt.coordinate[1]),
+                    Math.max(startCoord[0], evt.coordinate[0]),
+                    Math.max(startCoord[1], evt.coordinate[1])
+                ];
+
+                lastSelectionExtent = extent;
+                applySelection(extent);
+
+                selectSource.clear();
+                startCoord = null;
+            }
+        });
+    </script>
+</body>
+</html>

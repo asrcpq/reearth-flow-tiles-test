@@ -1,0 +1,2 @@
+data: generated temporary files
+artifacts: referred blobs

@@ -1,0 +1,6 @@
+{
+  "zip_path": "artifacts/13382_mikurajima-mura_pref_2024_citygml_1_op.zip",
+  "fme_output": "artifacts/13382_fme.zip",
+  "workflow_path": "engine/runtime/examples/fixture/workflow/data-convert/plateau4/02-tran-rwy-trk-squr-wwy/workflow.yml",
+  "threshold": 0.01
+}
