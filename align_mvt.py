@@ -2,6 +2,7 @@ import mapbox_vector_tile
 import sys, os
 from pathlib import Path
 from shapely.geometry import box, shape
+from geometry_comparison import compare_geometries
 
 def load_mvt(path):
     with open(path, "rb") as f:
@@ -64,23 +65,12 @@ def clip_geometry_to_tile(geom, extent):
     return clipped if not clipped.is_empty else None
 
 
-def align_mvt_feature_shapely(geom1, geom2, is_polygon):
-    geom_type = "polygon" if is_polygon else "linestring"
-
-    if geom1 is None and geom2 is None:
-        return {"status": "both_missing", "score": 0, "geometry_type": geom_type}
-
-    if geom1 is None:
-        size = geom2.length if not is_polygon else ((geom2.bounds[2]-geom2.bounds[0])**2 + (geom2.bounds[3]-geom2.bounds[1])**2)**0.5
-        return {"status": "only2", "score": size, "geometry_type": geom_type}
-
-    if geom2 is None:
-        size = geom1.length if not is_polygon else ((geom1.bounds[2]-geom1.bounds[0])**2 + (geom1.bounds[3]-geom1.bounds[1])**2)**0.5
-        return {"status": "only1", "score": size, "geometry_type": geom_type}
-
-    # Both present - compare (Shapely handles Multi* types automatically)
-    score = geom1.hausdorff_distance(geom2)
-    return {"status": "compared", "score": score, "geometry_type": geom_type}
+def align_mvt_feature_shapely(geom1, geom2):
+    """Compare two geometries using multi-level strategy."""
+    result = compare_geometries(geom1, geom2)
+    # Add legacy 'score' field for backward compatibility
+    result["score"] = result["overall_score"]
+    return result
 
 
 def align_mvt_layer(layer1_data, layer2_data, results, tile_path=None):
@@ -95,18 +85,12 @@ def align_mvt_layer(layer1_data, layer2_data, results, tile_path=None):
         if feature1:
             geom1 = shape(feature1['geometry'])
             geom1 = normalize_geometry(geom1, extent1)
-            is_poly = geom1.geom_type in ('Polygon', 'MultiPolygon')
-            # print(f"DEBUG {gml_id}: feature1 decoded as {geom1.geom_type}")
         else:
             geom1 = None
-            is_poly = False
 
         if feature2:
             geom2 = shape(feature2['geometry'])
             geom2 = normalize_geometry(geom2, extent2)
-            if not feature1:
-                is_poly = geom2.geom_type in ('Polygon', 'MultiPolygon')
-            # print(f"DEBUG {gml_id}: feature2 decoded as {geom2.geom_type}")
         else:
             geom2 = None
 
@@ -114,7 +98,7 @@ def align_mvt_layer(layer1_data, layer2_data, results, tile_path=None):
         geom1_clipped = clip_geometry_to_tile(geom1, 1.0) if geom1 else None
         geom2_clipped = clip_geometry_to_tile(geom2, 1.0) if geom2 else None
 
-        result = align_mvt_feature_shapely(geom1_clipped, geom2_clipped, is_poly)
+        result = align_mvt_feature_shapely(geom1_clipped, geom2_clipped)
         results.append((tile_path, gml_id, result))
 
 def align_mvt(src_dir, dst_dir):
@@ -131,23 +115,15 @@ def align_mvt(src_dir, dst_dir):
 def align_mvt_with_threshold(src_dir, dst_dir, threshold=0.0):
     results = align_mvt(src_dir, dst_dir)
 
-    good = []
-    bad = []
+    # Sort all results by score (worst first)
+    results.sort(key=lambda x: x[2].get('score', 0), reverse=True)
 
-    for tile_path, gml_id, result in results:
-        score = result.get('score', 0)
-        if score > threshold:
-            bad.append((tile_path, gml_id, result))
-        else:
-            good.append((tile_path, gml_id, result))
-
-    # Sort bad results by score (worst first)
-    bad.sort(key=lambda x: x[2].get('score', 0), reverse=True)
+    worst_score = results[0][2].get('score', 0) if results else 0.0
+    fail_count = sum(1 for _, _, result in results if result.get('score', 0) > threshold)
 
     return {
-        'good': good,
-        'bad': bad,
-        'good_count': len(good),
-        'bad_count': len(bad),
-        'total': len(results)
+        'results': results,
+        'total': len(results),
+        'fail_count': fail_count,
+        'worst_score': worst_score
     }
