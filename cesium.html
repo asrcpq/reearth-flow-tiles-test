@@ -6,24 +6,211 @@
     <script src="https://cesium.com/downloads/cesiumjs/releases/1.121/Build/Cesium/Cesium.js"></script>
     <link href="https://cesium.com/downloads/cesiumjs/releases/1.121/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
     <style>
-        html, body, #cesiumContainer {
-            width: 100%;
-            height: 100%;
+        html, body {
             margin: 0;
             padding: 0;
             overflow: hidden;
+            height: 100%;
+            width: 100%;
+            display: flex;
+        }
+        #cesiumContainer {
+            flex: 1;
+            height: 100%;
+            max-width: 70%;
+        }
+        #sidebar {
+            width: 30%;
+            height: 100vh;
+            overflow-y: auto;
+            padding: 10px;
+            box-sizing: border-box;
+            background: white;
+            border-left: 1px solid #ccc;
+            flex-shrink: 0;
+        }
+        #tilesFileInput {
+            width: 100%;
+            margin-bottom: 10px;
+        }
+        .layer-item {
+            display: grid;
+            grid-template-columns: auto 1fr;
+            align-items: center;
+            margin-bottom: 5px;
+        }
+        .layer-controls {
+            display: flex;
+            align-items: center;
+        }
+        .layer-controls label {
+            display: flex;
+            align-items: center;
+            gap: 3px;
+            font-size: 12px;
         }
     </style>
 </head>
 <body>
     <div id="cesiumContainer"></div>
+    <div id="sidebar">
+        <h2>3D Tiles Viewer</h2>
+        <input type="text" id="tilesFileInput" value="/Projects/reearth-flow-tiles-test/build/08220-3dtiles/3dtiles_list" placeholder="Path to 3dtiles_list file">
+        <div id="layersSection">
+            <h3>Layers</h3>
+            <div id="layersList"></div>
+        </div>
+    </div>
     <script>
+        let viewer;
+        let layerIdCounter = 0;
+        const layers = new Map(); // Map of layer ID to { tileset, color, urlInput, checkbox }
+
         (async function() {
-            const viewer = new Cesium.Viewer('cesiumContainer');
-            const tileset = await Cesium.Cesium3DTileset.fromUrl('./build/08220-3dtiles/output/tran_lod3/tileset.json');
-            viewer.scene.primitives.add(tileset);
-            viewer.zoomTo(tileset);
+            viewer = new Cesium.Viewer('cesiumContainer', {
+                terrainProvider: undefined
+            });
         })();
+
+        async function createTilesetLayer(url, colorIndex) {
+            const layerId = layerIdCounter++;
+            try {
+                const tileset = await Cesium.Cesium3DTileset.fromUrl(url);
+                applyTilesetStyle(tileset);
+                viewer.scene.primitives.add(tileset);
+                return { layerId, tileset };
+            } catch (error) {
+                console.error(`Failed to load tileset from ${url}:`, error);
+                return null;
+            }
+        }
+
+        // Function to apply style to tileset
+        function applyTilesetStyle(tileset) {
+            // Use hash of gml_id string to generate color
+            tileset.style = new Cesium.Cesium3DTileStyle({
+                color: {
+                    evaluateColor: function(feature, result) {
+                        const gmlId = feature.getProperty('gml_id') || '';
+                        let hash = 0;
+                        for (let i = 0; i < gmlId.length; i++) {
+                            hash = ((hash << 5) - hash) + gmlId.charCodeAt(i);
+                            hash = hash & hash;
+                        }
+                        const hue = Math.abs(hash) % 360;
+                        return Cesium.Color.fromHsl(hue / 360, 0.7, 0.5, 1.0, result);
+                    }
+                }
+            });
+        }
+
+        // Function to add layer UI
+        function addLayerUI(layerId, url, visible = true) {
+            const layerItem = document.createElement('div');
+            layerItem.className = 'layer-item';
+            layerItem.id = `layer-${layerId}`;
+
+            const controlsDiv = document.createElement('div');
+            controlsDiv.className = 'layer-controls';
+
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.checked = visible;
+            checkbox.addEventListener('change', () => {
+                const layerData = layers.get(layerId);
+                if (layerData && layerData.tileset) {
+                    layerData.tileset.show = checkbox.checked;
+                }
+            });
+            controlsDiv.appendChild(checkbox);
+            const urlInput = document.createElement('input');
+            urlInput.type = 'text';
+            urlInput.value = url;
+            urlInput.placeholder = 'Tileset URL';
+            urlInput.addEventListener('keypress', async (e) => {
+                if (e.key === 'Enter') {
+                    const layerData = layers.get(layerId);
+                    if (layerData && layerData.tileset) {
+                        viewer.scene.primitives.remove(layerData.tileset);
+                        try {
+                            const newTileset = await Cesium.Cesium3DTileset.fromUrl(e.target.value);
+                            applyTilesetStyle(newTileset);
+                            viewer.scene.primitives.add(newTileset);
+                            layerData.tileset = newTileset;
+                            layerData.tileset.show = checkbox.checked;
+                        } catch (error) {
+                            console.error('Failed to load new tileset:', error);
+                            alert('Failed to load tileset: ' + error.message);
+                        }
+                    }
+                }
+            });
+
+            layerItem.appendChild(controlsDiv);
+            layerItem.appendChild(urlInput);
+            document.getElementById('layersList').appendChild(layerItem);
+            return { urlInput, checkbox };
+        }
+
+        // Load layers from file
+        document.getElementById('tilesFileInput').addEventListener('keypress', async (e) => {
+            if (e.key === 'Enter') {
+                const fileUrl = e.target.value.trim();
+                if (!fileUrl) return;
+
+                try {
+                    const response = await fetch(fileUrl);
+                    const text = await response.text();
+
+                    // Parse lines, filter comments and empty lines
+                    const urls = text.split('\n')
+                        .map(line => line.trim())
+                        .filter(line => line && !line.startsWith('#'));
+
+                    // Resolve relative paths based on 3dtiles_list location
+                    const baseUrl = fileUrl.substring(0, fileUrl.lastIndexOf('/') + 1);
+                    const resolvedUrls = urls.map(url => {
+                        if (url.startsWith('/') || url.startsWith('http://') || url.startsWith('https://')) {
+                            return url;
+                        }
+                        return baseUrl + url;
+                    });
+
+                    // Clear existing layers
+                    layers.forEach((layerData, layerId) => {
+                        if (layerData.tileset) {
+                            viewer.scene.primitives.remove(layerData.tileset);
+                        }
+                        const element = document.getElementById(`layer-${layerId}`);
+                        if (element) element.remove();
+                    });
+                    layers.clear();
+
+                    // Add new layers
+                    for (let i = 0; i < resolvedUrls.length; i++) {
+                        const url = resolvedUrls[i];
+                        const result = await createTilesetLayer(url, i);
+                        if (result) {
+                            const { layerId, tileset } = result;
+                            const { urlInput, checkbox } = addLayerUI(layerId, url, true);
+                            layers.set(layerId, { tileset, urlInput, checkbox });
+                            tileset.show = true;
+                        }
+                    }
+
+                    // Zoom to first tileset if available
+                    if (resolvedUrls.length > 0) {
+                        const firstLayer = Array.from(layers.values())[0];
+                        if (firstLayer && firstLayer.tileset) {
+                            viewer.zoomTo(firstLayer.tileset);
+                        }
+                    }
+                } catch (error) {
+                    console.error('Failed to load 3dtiles_list file:', error);
+                    alert('Failed to load 3dtiles_list file: ' + error.message);
+                }
+            }
+        });
     </script>
 </body>
 </html>

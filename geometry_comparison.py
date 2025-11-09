@@ -66,3 +66,17 @@ def compare_lines(geom1, geom2):
         return ("compared", shapely.hausdorff_distance(lines1, lines2, densify=0.01))
     except:
         return ("error", float('inf'))
+
+def compare_3d_lines(geom1, geom2):
+    """Compare 3D lines without clipping (for union geometries)."""
+    lines1 = extract_lines(geom1)
+    lines2 = extract_lines(geom2)
+    if lines1 is None and lines2 is None:
+        return ("both_missing", 0.0)
+    if lines1 is None or lines2 is None:
+        single = lines2 if lines1 is None else lines1
+        return ("only2" if lines1 is None else "only1", single.length)
+    try:
+        return ("compared", shapely.hausdorff_distance(lines1, lines2, densify=0.01))
+    except:
+        return ("error", float('inf'))

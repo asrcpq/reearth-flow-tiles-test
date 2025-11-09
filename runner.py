@@ -2,13 +2,64 @@
 import sys, json, subprocess, os, zipfile, shutil
 from pathlib import Path
 from align_mvt import align_mvt
-from geometry_comparison import compare_polygons, compare_lines
+from align_3dtiles import align_3dtiles
+from geometry_comparison import compare_polygons, compare_lines, compare_3d_lines
 from run_workflow import main as run_workflow_main
 from filter_gml import filter_gml_objects
 
 REEARTH_DIR = Path("/Users/tsq/Projects/reearth-flow")
 ROOT = Path(__file__).parent
 PLATEAU_ROOT = Path(os.getenv("HOME")) / "Projects" / "gkk"
+
+def run_mvt_test(name, cfg, FME_DIR, OUTPUT_DIR):
+	"""Run MVT-based comparison tests (2D tiles)."""
+	zoom = cfg.get("zoom")
+	zmin = zoom[0] if zoom else None
+	zmax = zoom[1] if zoom else None
+
+	results = []
+	for path, gid, g1, g2 in align_mvt(FME_DIR, OUTPUT_DIR, zmin, zmax):
+		is_poly = (g1 or g2) and (g1 or g2).geom_type in ('Polygon', 'MultiPolygon')
+
+		if name == "compare_polygons" and is_poly:
+			status, score = compare_polygons(g1, g2)
+		elif name == "compare_lines":
+			status, score = compare_lines(g1, g2)
+		else:
+			continue
+
+		results.append((score, path, gid, status))
+
+	return results
+
+def run_3dtiles_test(name, cfg, FME_DIR, OUTPUT_DIR):
+	"""Run 3D tiles comparison tests."""
+	from shapely.ops import unary_union
+
+	fme_json = cfg.get("fme_json", FME_DIR / "export.json")
+	output_3dtiles = cfg.get("output_dir", OUTPUT_DIR / "tran_lod3")
+
+	results = []
+	for gid, f1, f2 in align_3dtiles(fme_json, output_3dtiles):
+		g1 = f1[0] if f1 else None  # FME ground truth geometry
+
+		if f2:
+			hierarchical_geoms, props2 = f2
+			# Compare ground truth against each LOD level
+			for level_idx, level_pieces in enumerate(hierarchical_geoms):
+				# Extract geometries from (geometry, error) tuples
+				geoms = [geom for geom, error in level_pieces]
+				# Union all pieces at this level
+				g2 = unary_union(geoms) if len(geoms) > 1 else geoms[0] if geoms else None
+				print(g1.bounds, g2.bounds)
+				status, score = compare_3d_lines(g1, g2)
+				results.append((score, f"{output_3dtiles}/LOD{level_idx}", gid, status))
+		else:
+			# No output geometry at all
+			status, score = compare_3d_lines(g1, None)
+			results.append((score, str(output_3dtiles), gid, status))
+
+	return results
 
 def run_test(profile_path, stages):
 	profile_path = Path(profile_path)
@@ -68,28 +119,20 @@ def run_test(profile_path, stages):
 		all_passed = True
 		for name, cfg in tests.items():
 			thresh = cfg.get("threshold", 0.0)
-			zoom = cfg.get("zoom")
-			zmin = zoom[0] if zoom else None
-			zmax = zoom[1] if zoom else None
 
-			results = []
+			# Run appropriate test based on name
+			if name == "compare_3d_lines":
+				results = run_3dtiles_test(name, cfg, FME_DIR, OUTPUT_DIR)
+			else:
+				results = run_mvt_test(name, cfg, FME_DIR, OUTPUT_DIR)
+
+			# Calculate statistics
 			worst = 0.0
 			fails = 0
-
-			for path, gid, g1, g2 in align_mvt(FME_DIR, OUTPUT_DIR, zmin, zmax):
-				is_poly = (g1 or g2) and (g1 or g2).geom_type in ('Polygon', 'MultiPolygon')
-
-				if name == "compare_polygons" and is_poly:
-					status, score = compare_polygons(g1, g2)
-				elif name == "compare_lines":
-					status, score = compare_lines(g1, g2)
-				else:
-					continue
-
+			for score, path, gid, status in results:
 				worst = max(worst, score)
 				if score > thresh:
 					fails += 1
-				results.append((score, path, gid, status))
 
 			if fails > 0:
 				all_passed = False
@@ -106,14 +149,27 @@ def run_test(profile_path, stages):
 
 		print("\nTest PASSED" if all_passed else "\nTest FAILED")
 
-		# generate output_list
+		# generate output_list (MVT tiles)
 		output_layers = sorted({p.relative_to(OUTPUT_DIR).parts[0] for p in OUTPUT_DIR.rglob("*.pbf")}) if OUTPUT_DIR.exists() else []
 		fme_layers = sorted({p.relative_to(FME_DIR).parts[0] for p in FME_DIR.rglob("*.pbf")}) if FME_DIR.exists() else []
-		with open(BUILD_DIR / "output_list", 'w') as f:
+
+		mvt_list_path = BUILD_DIR / "mvt_list"
+		with open(mvt_list_path, 'w') as f:
 			for layer in sorted(set(output_layers + fme_layers)):
 				if layer in output_layers: f.write(f"output/{layer}/{{z}}/{{x}}/{{y}}.pbf\n")
 				if layer in fme_layers: f.write(f"fme/{layer}/{{z}}/{{x}}/{{y}}.pbf\n")
-		print(f"Generated: {BUILD_DIR / 'output_list'}")
+		print(f"Generated: {mvt_list_path}")
+
+		# generate 3dtiles_list (directories containing tileset.json)
+		output_3dtiles = sorted({p.relative_to(OUTPUT_DIR).parent for p in OUTPUT_DIR.rglob("tileset.json")}) if OUTPUT_DIR.exists() else []
+		fme_3dtiles = sorted({p.relative_to(FME_DIR).parent for p in FME_DIR.rglob("tileset.json")}) if FME_DIR.exists() else []
+
+		tiles_3d_list_path = BUILD_DIR / "3dtiles_list"
+		with open(tiles_3d_list_path, 'w') as f:
+			for layer in sorted(set(output_3dtiles + fme_3dtiles)):
+				if layer in output_3dtiles: f.write(f"output/{layer}/tileset.json\n")
+				if layer in fme_3dtiles: f.write(f"fme/{layer}/tileset.json\n")
+		print(f"Generated: {tiles_3d_list_path}")
 
 stages = sys.argv[2] if len(sys.argv) > 2 else "re"
 run_test(Path(sys.argv[1]).resolve(), stages)
