@@ -12,19 +12,50 @@ REEARTH_DIR = Path("/Users/tsq/Projects/reearth-flow")
 ROOT = Path(__file__).parent
 PLATEAU_ROOT = Path(os.getenv("HOME")) / "Projects" / "gkk"
 
+def cast_attr(key, value, table):
+	if key not in table:
+		return value
+	ty = table[key]
+	if ty == "string":
+		return str(value)
+	elif ty == "json":
+		return json.loads(value)
+	else:
+		raise ValueError(f"Unknown cast type: {ty}")
+
+def compare_recurse(key, v1, v2, gid, bads, casts):
+	v1 = cast_attr(key, v1, casts)
+	v2 = cast_attr(key, v2, casts)
+	# print(key, casts.get("key", ""), type(v1), type(v2))
+	if type(v1) != type(v2):
+		# temporarily allow single-element lists to match their element
+		if isinstance(v1, list) and len(v1) == 1:
+			v1 = v1[0]
+		else:
+			bads.append((gid, key, v1, v2))
+			return
+	if isinstance(v1, dict):
+		for k in set(v1.keys()).union(set(v2.keys())):
+			compare_recurse(f"{key}.{k}", v1.get(k), v2.get(k), gid, bads, casts)
+	elif isinstance(v1, list):
+		if len(v1) != len(v2):
+			bads.append((gid, key, v1, v2))
+			return
+		for idx in range(len(v1)):
+			compare_recurse(f"{key}[{idx}]", v1[idx], v2[idx], gid, bads, casts)
+	else:
+		if v1 != v2:
+			bads.append((gid, key, v1, v2))
+
 def run_mvt_attr(name, cfg, d1, d2):
+	casts = cfg.get("casts", {})
 	for gid, attr1, attr2 in align_mvt_attr(d1, d2):
 		print(gid)
 		if attr1 == None or attr2 == None:
 			raise ValueError(f"Missing attributes for gml_id: {gid}")
 		bads = []
 		for k, v1, v2 in dict_zip(attr1, attr2):
-			if cfg.get("convert_to_strings", False):
-				if str(v1) != str(v2):
-					bads.append((gid, k, v1, v2))
-			else:
-				if v1 != v2:
-					bads.append((gid, k, v1, v2))
+			compare_recurse(k, v1, v2, gid, bads, casts)
 		if bads:
 			for gid, k, v1, v2 in bads:
 				if str(v1) == str(v2):

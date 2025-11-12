@@ -10,7 +10,14 @@
       "threshold": 0.001
     },
     "compare_mvt_attributes": {
-      "convert_to_strings": true
+      "casts": {
+        "uro_StationSquareAttribute_uro_areaPlanned": "string",
+        "uro_TerminalAttribute_uro_areaPlanned": "string",
+        "attributes": "json",
+        "attributes.meshcode": "string",
+        "attributes.uro:TerminalAttribute.uro:areaPlanned": "string",
+        "attributes.uro:StationSquareAttribute.uro:areaPlanned": "string"
+      }
     }
   },
   "filter": {
