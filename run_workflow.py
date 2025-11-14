@@ -7,6 +7,12 @@ from pathlib import Path
 
 def prepare_environment(workflow_path, citygml_path, data_dir, output_dir):
 	env = os.environ.copy()
+	print(citygml_path)
+	if citygml_path.suffix == ".gml":
+		print("Adding default codelists/schemas to environment")
+		# add default codelists/schemas
+		env["FLOW_VAR_codelists"] = citygml_path.parent.parent.parent / "codelists"
+		env["FLOW_VAR_schemas"] = citygml_path.parent.parent.parent / "schemas"
 	env['FLOW_EXAMPLE_TARGET_WORKFLOW'] = str(workflow_path)
 	env['FLOW_VAR_cityGmlPath'] = str(citygml_path)
 	env['FLOW_VAR_outputPath'] = str(output_dir)
