@@ -4,6 +4,11 @@ import os, sys, shutil
 import subprocess
 from datetime import datetime
 from pathlib import Path
+import yaml
+
+def resolve_workflow_to_json(workflow_path):
+	result = subprocess.run(['yaml-include', str(workflow_path)], capture_output=True, text=True, check=True)
+	return json.dumps(yaml.safe_load(result.stdout), indent=2)
 
 def prepare_environment(workflow_path, citygml_path, data_dir, output_dir):
 	env = os.environ.copy()
@@ -69,32 +74,23 @@ def collect_edge_data(runtime_dir, html_dir):
 
 def generate_html_report(workflow_path, citygml_path, data_dir, output_dir, timestamp, edge_data):
 	template_path = Path(__file__).parent / 'workflow_template.html'
-	if not template_path.exists():
-		print(f"Warning: Template not found at {template_path}, skipping HTML report")
-		return
-	with open(template_path, 'r') as f:
-		html = f.read()
-	if workflow_path.exists():
-		with open(workflow_path, 'r') as f:
-			workflow_yaml = f.read()
-	else:
-		workflow_yaml = "# Workflow file not found"
-	variables_display = f"cityGmlPath: {citygml_path}<br>"
-	variables_display += f"outputPath: {output_dir}"
+	html = open(template_path).read()
+
+	workflow_json = resolve_workflow_to_json(workflow_path)
+	open(data_dir / 'workflow.json', 'w').write(workflow_json)
+
+	variables_display = f"cityGmlPath: {citygml_path}<br>outputPath: {output_dir}"
 	html = html.replace('{{TIMESTAMP}}', timestamp)
 	html = html.replace('{{WORKFLOW_PATH}}', str(workflow_path))
 	html = html.replace('{{WORKING_DIR}}', str(data_dir / "runtime"))
 	html = html.replace('{{VARIABLES}}', variables_display)
-	workflow_yaml_escaped = workflow_yaml.replace('\\', '\\\\').replace('`', '\\`').replace('${', '\\${')
-	html = html.replace('{{WORKFLOW_YAML}}', workflow_yaml_escaped)
-	edge_metadata_json = json.dumps(edge_data).replace('\\', '\\\\').replace('`', '\\`')
-	html = html.replace('{{EDGE_DATA}}', edge_metadata_json)
-	output_path = data_dir / 'workflow.html'
-	with open(output_path, 'w') as f:
-		f.write(html)
-	print(f"HTML report: {output_path.absolute()}")
+	html = html.replace('{{WORKFLOW_JSON}}', workflow_json.replace('\\', '\\\\').replace('`', '\\`'))
+	html = html.replace('{{EDGE_DATA}}', json.dumps(edge_data).replace('\\', '\\\\').replace('`', '\\`'))
 
-def main(citygml_path, workflow_path, reearth_dir, data_dir, output_dir):
+	open(data_dir / 'workflow.html', 'w').write(html)
+	print(f"HTML report: {(data_dir / 'workflow.html').absolute()}")
+
+def run_workflow(citygml_path, workflow_path, reearth_dir, data_dir, output_dir):
 	timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 	subprocess.run(['rm', '-rf', str(output_dir)], check=False)
 	output_dir.mkdir(parents=True, exist_ok=True)
@@ -103,3 +99,8 @@ def main(citygml_path, workflow_path, reearth_dir, data_dir, output_dir):
 	edge_data = collect_edge_data(runtime_dir, data_dir)
 	generate_html_report(workflow_path, citygml_path, data_dir, output_dir, timestamp, edge_data)
 	print("Workflow execution completed successfully")
+
+if __name__ == "__main__":
+	workflow_path = Path(sys.argv[1])
+	data_dir = Path(sys.argv[2])
+	generate_html_report(workflow_path, Path(""), data_dir, Path(""), datetime.now().strftime('%Y-%m-%d %H:%M:%S'), {})

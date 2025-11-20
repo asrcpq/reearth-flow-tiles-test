@@ -4,7 +4,7 @@ from pathlib import Path
 from align_mvt import align_mvt, align_mvt_attr, dict_zip
 from align_3dtiles import align_3dtiles
 from geometry_comparison import compare_polygons, compare_lines, compare_3d_lines
-from run_workflow import main as run_workflow_main
+from run_workflow import run_workflow
 from filter_gml import filter_gml_objects
 from shapely.geometry import shape
 from pprint import pprint
@@ -192,7 +192,7 @@ def run_test(profile_path, stages):
 		workflow = REEARTH_DIR / profile["workflow_path"]
 		if not workflow.exists():
 			raise FileNotFoundError(f"Workflow not found: {workflow}")
-		run_workflow_main(citygml_path, workflow, REEARTH_DIR, BUILD_DIR, OUTPUT_DIR)
+		run_workflow(citygml_path, workflow, REEARTH_DIR, BUILD_DIR, OUTPUT_DIR)
 
 	if "e" in stages:
 		tests = profile.get("tests", {})

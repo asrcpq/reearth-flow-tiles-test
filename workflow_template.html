@@ -60,11 +60,10 @@
 <svg id=svg></svg>
 
 <script src="https://unpkg.com/d3@7"></script>
-<script src="https://unpkg.com/js-yaml@4.1.0/dist/js-yaml.min.js"></script>
 <script src="https://unpkg.com/dagre@0.8.5/dist/dagre.min.js"></script>
 
 <script>
-const workflowYaml = `{{WORKFLOW_YAML}}`;
+const workflowDoc = JSON.parse(`{{WORKFLOW_JSON}}`);
 const edgeDataMap = JSON.parse(`{{EDGE_DATA}}`);
 const graphSel = document.getElementById('graphSel');
 const edgeInfo = document.getElementById('edgeInfo');
@@ -259,10 +258,6 @@ function loadMoreFeatures(){
   }
 }
 
-function cleanYaml(text){
-  return text.split(/\r?\n/).filter(l=>!l.includes('!include')).join('\n');
-}
-
 function findGraphs(doc){
   if(!doc) return [];
   if(Array.isArray(doc.graphs)) return doc.graphs;
@@ -372,20 +367,15 @@ function layoutAndRender(graph){
   svg.call(zoom.transform, d3.zoomIdentity.translate(translateX, translateY).scale(scale));
 }
 
-try {
-  const doc = jsyaml.load(cleanYaml(workflowYaml));
-  const graphs = findGraphs(doc);
-  if(graphs.length > 0) {
-    graphs.forEach((g,i)=>{
-      const o = document.createElement('option');
-      o.value=i;
-      o.text = g.name||g.id||'graph#'+(i+1);
-      graphSel.add(o);
-    });
-    layoutAndRender(graphs[0]);
-    graphSel.onchange = ()=> layoutAndRender(graphs[+graphSel.value]);
-  }
-} catch(err) {
-  console.error('Error rendering workflow:', err);
+const graphs = findGraphs(workflowDoc);
+if(graphs.length > 0) {
+  graphs.forEach((g,i)=>{
+    const o = document.createElement('option');
+    o.value=i;
+    o.text = g.name||g.id||'graph#'+(i+1);
+    graphSel.add(o);
+  });
+  layoutAndRender(graphs[0]);
+  graphSel.onchange = ()=> layoutAndRender(graphs[+graphSel.value]);
 }
 </script>
