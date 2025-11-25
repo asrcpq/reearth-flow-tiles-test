@@ -84,6 +84,7 @@ def align_mvt(d1, d2, zmin=None, zmax=None):
 
 def load_mvt_attr(d):
     ret = {}
+    rel = {}
     for p in d.rglob("*.pbf"):
         with open(p, "rb") as f:
             tile = mapbox_vector_tile.decode(f.read())
@@ -92,9 +93,12 @@ def load_mvt_attr(d):
                 props = feature["properties"]
                 gml_id = props["gml_id"]
                 if gml_id in ret:
-                    assert ret[gml_id].items() <= props.items(), f"Attribute mismatch for {gml_id}"
+                    path = rel[gml_id]
+                    if ret[gml_id].items() != props.items():
+                        raise ValueError(f"reloading {gml_id}: {ret[gml_id]} != {props}, file1={path}, file2={p}")
                 else:
                     ret[gml_id] = props
+                    rel[gml_id] = p
     return ret
 
 def align_mvt_attr(d1, d2):

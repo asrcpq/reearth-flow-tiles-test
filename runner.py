@@ -55,20 +55,24 @@ def compare_recurse(key, v1, v2, gid, bads, casts):
 def run_mvt_attr(name, cfg, d1, d2):
 	results = []
 	casts = cfg.get("casts", {})
-	for gid, attr1, attr2 in align_mvt_attr(d1, d2):
-		if attr1 == None or attr2 == None:
-			raise ValueError(f"Missing attributes for gml_id: {gid}")
-		bads = []
-		for k, v1, v2 in dict_zip(attr1, attr2):
-			compare_recurse(k, v1, v2, gid, bads, casts)
-		if bads:
-			for gid, k, v1, v2 in bads:
-				if str(v1) == str(v2):
-					print(f"  MISMATCH gml_id={gid} key={k} fme={repr(v1)} reearth={repr(v2)}")
-				else:
-					print(f"  MISMATCH gml_id={gid} key={k} fme={v1} reearth={v2}")
-			raise ValueError(f"Attribute mismatches found for gml_id: {gid}")
-		results.append((0.0, "", gid, "ok", False))
+	ds1 = set(dd.name for dd in d1.iterdir() if any(dd.rglob("*.pbf")))
+	ds2 = set(dd.name for dd in d2.iterdir() if any(dd.rglob("*.pbf")))
+	if ds1 != ds2:
+		raise ValueError(f"Mismatched layers: {ds1} vs {ds2}")
+	for d in ds1:
+		dd1 = d1 / d
+		dd2 = d2 / d
+		for gid, attr1, attr2 in align_mvt_attr(dd1, dd2):
+			if attr1 == None or attr2 == None:
+				raise ValueError(f"Missing attributes for gml_id: {gid}")
+			bads = []
+			for k, v1, v2 in dict_zip(attr1, attr2):
+				compare_recurse(k, v1, v2, gid, bads, casts)
+			if bads:
+				for gid, k, v1, v2 in bads:
+					print(f"FAIL {dd1.name}/{dd2.name} {gid} key={k} fme={repr(v1)} reearth={repr(v2)}")
+				raise ValueError(f"Attribute mismatches found for gml_id: {gid}")
+			results.append((0.0, "", gid, "ok", False))
 	return results
 
 def run_3dtiles_attr(name, cfg, d1, d2):
@@ -233,6 +237,7 @@ def run_test(profile_path, stages):
 
 		print("\nTest PASSED" if all_passed else "\nTest FAILED")
 
+	if "v" in stages:
 		# generate output_list (MVT tiles)
 		output_layers = sorted({p.relative_to(OUTPUT_DIR).parts[0] for p in OUTPUT_DIR.rglob("*.pbf")}) if OUTPUT_DIR.exists() else []
 		fme_layers = sorted({p.relative_to(FME_DIR).parts[0] for p in FME_DIR.rglob("*.pbf")}) if FME_DIR.exists() else []

@@ -20,7 +20,7 @@ def prepare_environment(workflow_path, citygml_path, data_dir, output_dir):
 		env["FLOW_VAR_schemas"] = citygml_path.parent.parent.parent / "schemas"
 	env['FLOW_EXAMPLE_TARGET_WORKFLOW'] = str(workflow_path)
 	env['FLOW_VAR_cityGmlPath'] = str(citygml_path)
-	env['FLOW_VAR_outputPath'] = str(output_dir)
+	env['FLOW_VAR_workerArtifactPath'] = str(output_dir)
 	runtime_dir = data_dir / "runtime"
 	try:
 		shutil.rmtree(runtime_dir)
@@ -29,12 +29,30 @@ def prepare_environment(workflow_path, citygml_path, data_dir, output_dir):
 	env['FLOW_RUNTIME_WORKING_DIRECTORY'] = str(runtime_dir)
 	return env, runtime_dir
 
-def run_workflow(reearth_dir, workflow_path, env):
-	print(f"Running workflow: {workflow_path}")
-	p = subprocess.run(['cargo', 'run', '--example', 'example_main'], cwd=reearth_dir / "engine", env=env)
-	if p.returncode != 0:
-		raise Exception("Workflow run FAILED")
-	return p
+def filter_coordinates(obj):
+	"""
+	Recursively filter coordinate lists from objects and replace them with (N coordinates) string.
+	This reduces the size of edge data for HTML rendering.
+	"""
+	if isinstance(obj, dict):
+		filtered = {}
+		for key, value in obj.items():
+			if key in ['exterior', 'interior', 'pos'] and isinstance(value, list):
+				# Check if it's a coordinate list (list of objects with x, y, z keys)
+				if value and isinstance(value, list) and (
+					(isinstance(value[0], dict) and 'x' in value[0] and 'y' in value[0]) or
+					isinstance(value[0], (int, float))
+				):
+					filtered[key] = f"({len(value)} coordinates)"
+				else:
+					filtered[key] = filter_coordinates(value)
+			else:
+				filtered[key] = filter_coordinates(value)
+		return filtered
+	elif isinstance(obj, list):
+		return [filter_coordinates(item) for item in obj]
+	else:
+		return obj
 
 def collect_edge_data(runtime_dir, html_dir):
 	if not runtime_dir.exists():
@@ -60,13 +78,16 @@ def collect_edge_data(runtime_dir, html_dir):
 						count += 1
 					if count > 0 and first_line:
 						sample = json.loads(first_line)
+						# Filter coordinates from sample to reduce size
+						sample = filter_coordinates(sample)
 						attributes = sample.get('attributes', {})
 						# Make path relative to the HTML file location
 						rel_path = jsonl_file.relative_to(html_dir)
 						edge_data[edge_id] = {
 							'count': count,
 							'file_path': str(rel_path),
-							'sample_attributes': list(attributes.keys())[:10]
+							'sample_attributes': list(attributes.keys())[:10],
+							'sample': sample
 						}
 			except (json.JSONDecodeError, IndexError):
 				continue
@@ -95,12 +116,15 @@ def run_workflow(citygml_path, workflow_path, reearth_dir, data_dir, output_dir)
 	subprocess.run(['rm', '-rf', str(output_dir)], check=False)
 	output_dir.mkdir(parents=True, exist_ok=True)
 	env, runtime_dir = prepare_environment(workflow_path, citygml_path, data_dir, output_dir)
-	run_workflow(reearth_dir, workflow_path, env)
+	subprocess.run(['cargo', 'run', '--example', 'example_main'], cwd=reearth_dir / "engine", env=env, check=True)
 	edge_data = collect_edge_data(runtime_dir, data_dir)
 	generate_html_report(workflow_path, citygml_path, data_dir, output_dir, timestamp, edge_data)
 	print("Workflow execution completed successfully")
 
 if __name__ == "__main__":
-	workflow_path = Path(sys.argv[1])
-	data_dir = Path(sys.argv[2])
-	generate_html_report(workflow_path, Path(""), data_dir, Path(""), datetime.now().strftime('%Y-%m-%d %H:%M:%S'), {})
+	citygml_path = Path(sys.argv[1])
+	workflow_path = Path(sys.argv[2])
+	reearth_dir = Path(sys.argv[3])
+	data_dir = Path(sys.argv[4])
+	output_dir = Path(sys.argv[5])
+	run_workflow(citygml_path, workflow_path, reearth_dir, data_dir, output_dir)
