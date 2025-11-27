@@ -21,7 +21,6 @@
 <body>
     <div id="map"></div>
     <div id="sidebar">
-        <input type="text" id="layersFileInput" value="/Projects/reearth-flow-tiles-test/build/14212-squr/output_list">
         <div id="gridToggle">
             <label><input type="checkbox" id="showGrid"> Show Tile Grid</label>
         </div>
@@ -172,11 +171,8 @@
             return urlInput;
         }
 
-        // Initialize with two layers
-        const initialUrls = [
-            '/Projects/flowutils/build/output/trk_lod0/{z}/{x}/{y}.pbf',
-            '/Projects/flowutils/build/fme/trk_lod0/{z}/{x}/{y}.pbf'
-        ];
+        // Injected tile list
+        const initialUrls = {{TILES_LIST}};
 
         initialUrls.forEach((url, index) => {
             const { layerId, olLayer, color } = createLayer(url, index);
@@ -213,51 +209,6 @@
         document.getElementById('map').addEventListener('contextmenu', e => e.preventDefault());
 
         let startCoord = null;
-
-        // Load layers from file
-        document.getElementById('layersFileInput').addEventListener('keypress', async (e) => {
-            if (e.key === 'Enter') {
-                const fileUrl = e.target.value.trim();
-                if (!fileUrl) return;
-
-                try {
-                    const response = await fetch(fileUrl);
-                    const text = await response.text();
-
-                    // Parse lines, filter comments and empty lines
-                    const urls = text.split('\n')
-                        .map(line => line.trim())
-                        .filter(line => line && !line.startsWith('#'));
-
-                    // Resolve relative paths based on output_list location
-                    const baseUrl = fileUrl.substring(0, fileUrl.lastIndexOf('/') + 1);
-                    const resolvedUrls = urls.map(url => {
-                        if (url.startsWith('/') || url.startsWith('http://') || url.startsWith('https://')) {
-                            return url;
-                        }
-                        return baseUrl + url;
-                    });
-
-                    // Clear existing layers
-                    layers.forEach((layerData, layerId) => {
-                        map.removeLayer(layerData.olLayer);
-                        document.getElementById(`layer-${layerId}`).remove();
-                    });
-                    layers.clear();
-
-                    // Add new layers
-                    resolvedUrls.forEach((url, index) => {
-                        const { layerId, olLayer, color } = createLayer(url, index);
-                        const urlInput = addLayerUI(layerId, url, color, true);
-                        layers.set(layerId, { olLayer, color, urlInput });
-                        olLayer.setVisible(true);
-                    });
-                } catch (error) {
-                    console.error('Failed to load layers file:', error);
-                    alert('Failed to load layers file: ' + error.message);
-                }
-            }
-        });
 
         map.on('pointerdown', evt => {
             if (evt.originalEvent.button === 0) {

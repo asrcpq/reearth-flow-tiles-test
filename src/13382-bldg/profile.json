@@ -1,6 +1,0 @@
-{
-  "citygml_plateau": "13382_mikurajima-mura_pref_2024_citygml_1_op.zip",
-  "fme_output": "artifacts/13382-bldg_fme.zip",
-  "workflow_path": "engine/runtime/examples/fixture/workflow/data-convert/plateau4/01-bldg/workflow.yml",
-  "tests": {}
-}

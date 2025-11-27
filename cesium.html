@@ -55,7 +55,6 @@
     <div id="cesiumContainer"></div>
     <div id="sidebar">
         <h2>3D Tiles Viewer</h2>
-        <input type="text" id="tilesFileInput" value="/Projects/reearth-flow-tiles-test/build/08220-3dtiles/3dtiles_list" placeholder="Path to 3dtiles_list file">
         <div id="layersSection">
             <h3>Layers</h3>
             <div id="layersList"></div>
@@ -66,10 +65,33 @@
         let layerIdCounter = 0;
         const layers = new Map(); // Map of layer ID to { tileset, color, urlInput, checkbox }
 
+        // Injected tile list
+        const tilesetUrls = {{TILES_LIST}};
+
         (async function() {
             viewer = new Cesium.Viewer('cesiumContainer', {
                 terrainProvider: undefined
             });
+
+            // Load all tilesets
+            for (let i = 0; i < tilesetUrls.length; i++) {
+                const url = tilesetUrls[i];
+                const result = await createTilesetLayer(url, i);
+                if (result) {
+                    const { layerId, tileset } = result;
+                    const { urlInput, checkbox } = addLayerUI(layerId, url, true);
+                    layers.set(layerId, { tileset, urlInput, checkbox });
+                    tileset.show = true;
+                }
+            }
+
+            // Zoom to first tileset if available
+            if (tilesetUrls.length > 0) {
+                const firstLayer = Array.from(layers.values())[0];
+                if (firstLayer && firstLayer.tileset) {
+                    viewer.zoomTo(firstLayer.tileset);
+                }
+            }
         })();
 
         async function createTilesetLayer(url, colorIndex) {
@@ -151,66 +173,6 @@
             document.getElementById('layersList').appendChild(layerItem);
             return { urlInput, checkbox };
         }
-
-        // Load layers from file
-        document.getElementById('tilesFileInput').addEventListener('keypress', async (e) => {
-            if (e.key === 'Enter') {
-                const fileUrl = e.target.value.trim();
-                if (!fileUrl) return;
-
-                try {
-                    const response = await fetch(fileUrl);
-                    const text = await response.text();
-
-                    // Parse lines, filter comments and empty lines
-                    const urls = text.split('\n')
-                        .map(line => line.trim())
-                        .filter(line => line && !line.startsWith('#'));
-
-                    // Resolve relative paths based on 3dtiles_list location
-                    const baseUrl = fileUrl.substring(0, fileUrl.lastIndexOf('/') + 1);
-                    const resolvedUrls = urls.map(url => {
-                        if (url.startsWith('/') || url.startsWith('http://') || url.startsWith('https://')) {
-                            return url;
-                        }
-                        return baseUrl + url;
-                    });
-
-                    // Clear existing layers
-                    layers.forEach((layerData, layerId) => {
-                        if (layerData.tileset) {
-                            viewer.scene.primitives.remove(layerData.tileset);
-                        }
-                        const element = document.getElementById(`layer-${layerId}`);
-                        if (element) element.remove();
-                    });
-                    layers.clear();
-
-                    // Add new layers
-                    for (let i = 0; i < resolvedUrls.length; i++) {
-                        const url = resolvedUrls[i];
-                        const result = await createTilesetLayer(url, i);
-                        if (result) {
-                            const { layerId, tileset } = result;
-                            const { urlInput, checkbox } = addLayerUI(layerId, url, true);
-                            layers.set(layerId, { tileset, urlInput, checkbox });
-                            tileset.show = true;
-                        }
-                    }
-
-                    // Zoom to first tileset if available
-                    if (resolvedUrls.length > 0) {
-                        const firstLayer = Array.from(layers.values())[0];
-                        if (firstLayer && firstLayer.tileset) {
-                            viewer.zoomTo(firstLayer.tileset);
-                        }
-                    }
-                } catch (error) {
-                    console.error('Failed to load 3dtiles_list file:', error);
-                    alert('Failed to load 3dtiles_list file: ' + error.message);
-                }
-            }
-        });
     </script>
 </body>
 </html>
