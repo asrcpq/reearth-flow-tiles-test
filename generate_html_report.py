@@ -108,36 +108,29 @@ def summarize_geometry(geometry):
 
 	raise ValueError(f"Unknown geometry value variant: {list(value.keys())}")
 
-def collect_edge_data(jobs_dir):
-	if not jobs_dir.exists():
-		return {}
+def collect_edge_data(job_dir):
 	edge_data = {}
-	for job_dir in jobs_dir.iterdir():
-		if not job_dir.is_dir():
-			continue
-		feature_store = job_dir / "feature-store"
-		if not feature_store.exists():
-			continue
-		for jsonl_file in feature_store.glob("*.jsonl"):
-			parts = jsonl_file.stem.split(".")
-			edge_id = parts[-1] if len(parts) > 1 else parts[0]
-			features = []
-			with open(jsonl_file, "r") as f:
-				for line in f:
-					line = line.strip()
-					if line:
-						feature = json.loads(line)
-						# Replace geometry with summary
-						geometry = feature.get("geometry")
-						if geometry:
-							geometry_summary = summarize_geometry(geometry)
-							feature["geometry"] = geometry_summary
-						features.append(feature)
-			if features:
-				edge_data[edge_id] = {
-					"count": len(features),
-					"features": features
-				}
+	feature_store = job_dir / "feature-store"
+	for jsonl_file in feature_store.glob("*.jsonl"):
+		parts = jsonl_file.stem.split(".")
+		edge_id = parts[-1] if len(parts) > 1 else parts[0]
+		features = []
+		with open(jsonl_file, "r") as f:
+			for line in f:
+				line = line.strip()
+				if line:
+					feature = json.loads(line)
+					# Replace geometry with summary
+					geometry = feature.get("geometry")
+					if geometry:
+						geometry_summary = summarize_geometry(geometry)
+						feature["geometry"] = geometry_summary
+					features.append(feature)
+		if features:
+			edge_data[edge_id] = {
+				"count": len(features),
+				"features": features
+			}
 	return edge_data
 
 def generate_html_report(output_dir):
@@ -147,17 +140,15 @@ def generate_html_report(output_dir):
 	with open(output_dir / "workflow.json") as f:
 		workflow_json = f.read()
 	html = html.replace("{{WORKFLOW_JSON}}", workflow_json.replace("\\", "\\\\").replace("`", "\\`"))
-	jobs_dir = output_dir / "runtime/projects/engine/jobs"
-	edge_data = collect_edge_data(jobs_dir)
+	edge_data = collect_edge_data(output_dir / "runtime")
 	html = html.replace("{{EDGE_DATA}}", json.dumps(edge_data).replace("\\", "\\\\").replace("`", "\\`"))
 
 	with open(output_dir / "workflow.html", "w") as f:
 		f.write(html)
 
-	# Generate MVT viewer if .pbf files exist
-	pbf_dirs = sorted({f.parent.parent.parent.relative_to(output_dir) for f in output_dir.rglob("*.pbf")})
-	if pbf_dirs:
-		tiles = [str(d / "{z}" / "{x}" / "{y}.pbf") for d in pbf_dirs]
+	mvt_dirs = sorted({f.parent.parent.parent.relative_to(output_dir) for f in output_dir.rglob("*.mvt")})
+	if mvt_dirs:
+		tiles = [str(d / "{z}" / "{x}" / "{y}.mvt") for d in mvt_dirs]
 		html = open(Path(__file__).parent / "mvt-viewer.html").read().replace("{{TILES_LIST}}", json.dumps(tiles))
 		(output_dir / "mvt-viewer.html").write_text(html)
 
@@ -172,4 +163,4 @@ def generate_html_report(output_dir):
 
 if __name__ == "__main__":
 	html_path = generate_html_report(Path(sys.argv[1]).resolve())
-	run(["open", "-a", "Safari", "http://localhost:8080/" + str(html_path.relative_to(os.getenv("HOME")))])
+	run(["open", "http://localhost:8080/" + str(html_path.relative_to(os.getenv("HOME")))])
