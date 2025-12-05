@@ -1,6 +1,6 @@
 import zipfile
 import re
-from . import log
+import logging
 
 def filter_gml_content(content, gml_ids):
     """Filter GML content to only include specific gml:id members."""
@@ -47,35 +47,9 @@ def should_include_path(path, tree):
 
     return False
 
-# example tree which includes codelists and schemas directory and specific gml ids:
-# "udx/squr/533912_squr_6697_op.gml": [gml_id1, gml_id2, ...]
-# "": ["codelists/", "schemas/"]
-def filter_zip(src_zip, dst_zip, tree):
-    """Filter a zip file based on tree structure."""
-    # Get directories/files to include entirely from root
-    include_paths = tree.get("", [])
-
-    with zipfile.ZipFile(src_zip, 'r') as src, zipfile.ZipFile(dst_zip, 'w', zipfile.ZIP_DEFLATED) as dst:
-        for item in src.infolist():
-            path = item.filename
-
-            # Check if this is a GML file with specific gml_ids to filter (highest priority)
-            if path in tree and isinstance(tree[path], list):
-                gml_ids = tree[path]
-                log.debug(f"Filtering GML file: {path} for {len(gml_ids)} IDs")
-                content = src.read(path)
-                filtered_content = filter_gml_content(content, gml_ids)
-                dst.writestr(item, filtered_content)
-                continue
-
-            # Check if this path matches any tree entry
-            if should_include_path(path, tree):
-                log.debug(f"Including file by prefix match: {path}")
-                dst.writestr(item, src.read(path))
-
 def extract_zip_to_structure(src_zip, artifacts_base, testcase_base, name, tree):
     """Extract zip to artifacts (codelists/schemas) and testcase (filtered GML files)."""
-    artifact_dir = artifacts_base / name
+    artifact_dir = artifacts_base / "citymodel" / src_zip.stem
     testcase_dir = testcase_base / name
     artifact_dir.mkdir(parents=True, exist_ok=True)
 
@@ -109,15 +83,15 @@ def extract_zip_to_structure(src_zip, artifacts_base, testcase_base, name, tree)
                 out_path.write_bytes(zf.read(path))
 
 if __name__ == "__main__":
-	import tomllib, sys
+    import tomllib, sys
     from pathlib import Path
-    config_path = Path(sys.argv[1])
+    config_path = Path(sys.argv[1]).resolve()
     with config_path.open("rb") as f:
         config = tomllib.load(f)
     BASE_DIR = Path(__file__).parent.parent / "reearth-flow/engine/plateau-tiles-test"
-    test_name = config_path.parent.relative_to(BASE_DIR)
-    citymodel_path = Path(__file__) / "data"
+    test_name = config_path.parent.relative_to(BASE_DIR / "testcases").as_posix()
+    citymodel_path = Path(__file__).parent / "data"
     artifacts_base = BASE_DIR / "artifacts"
-    testcase_base = BASE_DIR / "testcase"
+    testcase_base = BASE_DIR / "testcases"
     src_zip = citymodel_path / config["citygml_zip_name"]
     extract_zip_to_structure(src_zip, artifacts_base, testcase_base, test_name, config["filter"]["tree"])
