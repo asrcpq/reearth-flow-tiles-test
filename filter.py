@@ -1,6 +1,7 @@
 import zipfile
 import re
 import logging
+import shutil
 
 def filter_gml_content(content, gml_ids):
     """Filter GML content to only include specific gml:id members."""
@@ -50,8 +51,12 @@ def should_include_path(path, tree):
 def extract_zip_to_structure(src_zip, artifacts_base, testcase_base, name, tree):
     """Extract zip to artifacts (codelists/schemas) and testcase (filtered GML files)."""
     artifact_dir = artifacts_base / "citymodel" / src_zip.stem
-    testcase_dir = testcase_base / name
     artifact_dir.mkdir(parents=True, exist_ok=True)
+    testcase_dir = testcase_base / name / "citymodel"
+    try:
+        shutil.rmtree(testcase_dir)
+    except FileNotFoundError:
+        pass
 
     with zipfile.ZipFile(src_zip, 'r') as zf:
         for item in zf.infolist():
@@ -71,14 +76,14 @@ def extract_zip_to_structure(src_zip, artifacts_base, testcase_base, name, tree)
                 gml_ids = tree[path]
                 content = zf.read(path)
                 filtered_content = filter_gml_content(content, gml_ids)
-                out_path = testcase_dir / "citymodel" / path
+                out_path = testcase_dir / path
                 out_path.parent.mkdir(parents=True, exist_ok=True)
                 out_path.write_bytes(filtered_content)
                 continue
 
             # Extract matching files to testcase/citymodel/
             if should_include_path(path, tree) and not (path.startswith("codelists/") or path.startswith("schemas/")):
-                out_path = testcase_dir / "citymodel" / path
+                out_path = testcase_dir / path
                 out_path.parent.mkdir(parents=True, exist_ok=True)
                 out_path.write_bytes(zf.read(path))
 
