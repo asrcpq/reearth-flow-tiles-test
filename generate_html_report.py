@@ -21,8 +21,9 @@ def collect_edge_data(job_dir):
 	edge_data = {}
 	feature_store = job_dir / "feature-store"
 	for jsonl_file in feature_store.glob("*.jsonl"):
-		parts = jsonl_file.stem.split(".")
-		edge_id = parts[-1] if len(parts) > 1 else parts[0]
+		# Use the full stem as edge_id to support subgraph edges
+		# Format: {edge-id}.jsonl or {parent-node-id}.{subgraph-edge-id}.jsonl
+		edge_id = jsonl_file.stem
 		features = []
 		with open(jsonl_file, "r") as f:
 			for line in f:

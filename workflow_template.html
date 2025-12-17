@@ -235,6 +235,10 @@ function layoutAndRender(graph){
   const g = new dagre.graphlib.Graph({multigraph: true})
     .setGraph({rankdir:'TB', nodesep: 40, ranksep: 80})
     .setDefaultEdgeLabel(()=>{});
+
+  // Determine if this graph is a subgraph and get parent node ID
+  const parentNodeId = subgraphToParentNode[graph.id];
+
   for (const n of graph.nodes||[]) {
     const name = n.name || n.id;
     const action = n.action || '';
@@ -242,7 +246,9 @@ function layoutAndRender(graph){
     g.setNode(n.id, {label: name + '\n' + action, width, height: 40, name, action});
   }
   for (const e of graph.edges||[]) {
-    g.setEdge(e.from, e.to, {edgeId: e.id}, e.id);
+    // For subgraph edges, prefix with parent node ID to match file naming
+    const edgeId = parentNodeId ? `${parentNodeId}.${e.id}` : e.id;
+    g.setEdge(e.from, e.to, {edgeId: edgeId}, e.id);
   }
   dagre.layout(g);
 
@@ -324,6 +330,20 @@ function layoutAndRender(graph){
 
   svg.call(zoom.transform, d3.zoomIdentity.translate(translateX, translateY).scale(scale));
 }
+
+// Build a mapping from subgraph ID to parent node ID for edge data lookup
+const subgraphToParentNode = {};
+function buildSubgraphMapping(doc) {
+  const graphs = findGraphs(doc);
+  for (const graph of graphs) {
+    for (const node of graph.nodes || []) {
+      if (node.subGraphId) {
+        subgraphToParentNode[node.subGraphId] = node.id;
+      }
+    }
+  }
+}
+buildSubgraphMapping(workflowDoc);
 
 const graphs = findGraphs(workflowDoc);
 if(graphs.length > 0) {
