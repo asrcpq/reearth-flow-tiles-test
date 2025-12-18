@@ -4,9 +4,9 @@ import logging
 import shutil
 
 class Node:
-    def __init__(self, tag, text):
-        self.tag = tag
-        self.text = text
+    def __init__(self, name, attr):
+        self.name = name
+        self.attr = attr
         self.children = []
     def only_node_child(self):
         assert len(self.children) == 1, "Node does not have exactly one child"
@@ -19,10 +19,10 @@ class Node:
         assert isinstance(child, str), "Child is not a text node"
         return child
     def build_tag(self):
-        if self.text:
-            return f"<{self.tag} {self.text}>"
+        if self.attr:
+            return f"<{self.name} {self.attr}>"
         else:
-            return f"<{self.tag}>"
+            return f"<{self.name}>"
     def build(self):
         result = []
 
@@ -31,7 +31,7 @@ class Node:
             result.append(self.build_tag())
             for child in self.children:
                 result.append(child)
-            result.append(f"</{self.tag}>\n")
+            result.append(f"</{self.name}>\n")
             return ''.join(result)
 
         result.append(self.build_tag() + "\n")
@@ -40,7 +40,7 @@ class Node:
                 result.append(child.build())
             else:
                 result.append(child)
-        result.append(f"</{self.tag}>\n")
+        result.append(f"</{self.name}>\n")
         return ''.join(result)
 
 class Xml:
@@ -88,7 +88,7 @@ def collect_gml_id_recurse(node):
     result = set()
     if isinstance(node, str):
         return result
-    for attr in node.text.split():
+    for attr in node.attr.split():
         if attr.startswith("gml:id="):
             gml_id = attr.split('=', 1)[1].strip('"')
             result.add(gml_id)
@@ -106,14 +106,14 @@ def filter_gml_content(content, gml_ids):
     count = [0, 0]  # kept, removed
     new_toplevels = []
     referred_gmlids = set()
-    assert root.tag == "core:CityModel", f"Unexpected root tag: {root.tag}"
+    assert root.name == "core:CityModel", f"Unexpected root tag: {root.name}"
     for toplevel in root.children:
         assert isinstance(toplevel, Node), "CityModel child is not a Node"
-        if toplevel.tag == "core:cityObjectMember":
+        if toplevel.name == "core:cityObjectMember":
             assert len(toplevel.children) == 1, "Unexpected structure in cityObjectMember"
             cityobject = toplevel.children[0]
             assert isinstance(cityobject, Node), "cityObjectMember child is not a Node"
-            for attr in cityobject.text.split():
+            for attr in cityobject.attr.split():
                 if attr.startswith("gml:id="):
                     gml_id = attr.split('=', 1)[1].strip('"')
                     if gml_id in gml_ids:
@@ -136,12 +136,12 @@ def filter_gml_content(content, gml_ids):
     referred_images = set()
     for toplevel in root.children:
         assert isinstance(toplevel, Node), "CityModel child is not a Node"
-        if toplevel.tag == "app:appearanceMember":
+        if toplevel.name == "app:appearanceMember":
             appearance = toplevel.only_node_child()
-            assert appearance.tag == "app:Appearance", "Unexpected tag in appearanceMember"
+            assert appearance.name == "app:Appearance", "Unexpected tag in appearanceMember"
             for member in appearance.children:
                 assert isinstance(member, Node), "Appearance child is not a Node"
-                if member.tag == "app:surfaceDataMember":
+                if member.name == "app:surfaceDataMember":
                     # we need to process two tags under surfaceDataMember: X3DMaterial and ParameterizedTexture
                     member2 = member.only_node_child()
                     new_children = []
@@ -149,15 +149,15 @@ def filter_gml_content(content, gml_ids):
                     referred_images2 = set()
                     for child in member2.children:
                         assert isinstance(child, Node), "surfaceDataMember grandchild is not a Node"
-                        if child.tag != "app:target":
-                            if child.tag == "app:imageURI":
+                        if child.name != "app:target":
+                            if child.name == "app:imageURI":
                                 referred_images2.add(child.only_text_child())
                             new_children.append(child)
                             continue
                         # find children like <app:target>#fme-gen-833a934e-0449-4161-8b79-3e632df34a4b</app:target>
                         # or <app:target uri="#fme-gen-7efa16e4-50f2-4799-bea8-79e99ef207b3">...</app:target>
                         uri = None
-                        for attr in child.text.split():
+                        for attr in child.attr.split():
                             if attr.startswith("uri="):
                                 uri = attr.split('=', 1)[1].strip('"')
                                 break
