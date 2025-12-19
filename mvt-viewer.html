@@ -99,6 +99,16 @@
                     let geom = feature.getGeometry();
                     let geomType = geom ? geom.getType() : 'null';
 
+                    if (geomType === 'Point' || geomType === 'MultiPoint') {
+                        return new ol.style.Style({
+                            image: new ol.style.Circle({
+                                radius: 6,
+                                fill: new ol.style.Fill({ color: color.color }),
+                                stroke: new ol.style.Stroke({ color: '#fff', width: 2 })
+                            })
+                        });
+                    }
+
                     if (geomType === 'LineString' || geomType === 'MultiLineString') {
                         return new ol.style.Style({
                             stroke: new ol.style.Stroke({
