@@ -12,7 +12,6 @@ from pathlib import Path
 def decompress_glb_file(glb_file):
     temp_file = glb_file.with_suffix(".glb.tmp")
     shutil.copy2(glb_file, temp_file)
-
     try:
         subprocess.run(
             ["npx", "glb-decompress", str(temp_file)],
@@ -29,10 +28,8 @@ def decompress_glb_file(glb_file):
 def upgrade_tileset(tileset_dir):
     tileset_json = tileset_dir / "tileset.json"
     assert tileset_json.exists(), f"tileset.json not found in {tileset_dir}"
-
     backup_dir = tileset_dir.parent / f"{tileset_dir.name}_backup"
     tileset_dir.rename(backup_dir)
-
     try:
         subprocess.run([
             "npx", "3d-tiles-tools", "upgrade",
@@ -51,79 +48,43 @@ def upgrade_tileset(tileset_dir):
         backup_dir.rename(tileset_dir)
         raise
 
-
 def find_and_upgrade_tilesets(root_dir):
     for tileset_json in root_dir.rglob("tileset.json"):
         tileset_dir = tileset_json.parent
         if any(tileset_dir.rglob("*.b3dm")):
             upgrade_tileset(tileset_dir)
 
-
 def remove_b3dm_files(root_dir):
     for b3dm_file in root_dir.rglob("*.b3dm"):
         b3dm_file.unlink()
 
-
-def parse_citygml_name(citygml_name):
-    name = citygml_name.replace(".zip", "")
-    parts = name.split("_")
-    assert "citygml" in parts, f"Invalid citygml_name: {citygml_name}"
-
-    code = parts[0]
-    citygml_idx = parts.index("citygml")
-    city = "_".join(parts[1:citygml_idx-2])
-    provider = parts[citygml_idx-2]
-    year = parts[citygml_idx-1]
-    update = parts[citygml_idx+1]
-
-    return code, city, provider, year, update
-
-
 def detect_format(dir_path):
     assert dir_path.exists(), f"Directory not found: {dir_path}"
-
     has_tileset = any(dir_path.rglob("tileset.json"))
     has_glb = any(dir_path.rglob("*.glb"))
     has_mvt = any(dir_path.rglob("*.mvt"))
-
     if has_tileset or has_glb:
         return "3dtiles"
     elif has_mvt:
         return "mvt"
-
     raise AssertionError(f"Cannot detect format: {dir_path}")
 
-
 def auto_generate_zip_name(citygml_name, dir_name, dir_path):
-    code, city, provider, year, update = parse_citygml_name(citygml_name)
-
+    stripped_name = citygml_name.replace(".zip", "")
     parts = dir_name.split("_")
-    feature = parts[0]
+    if parts[0] and stripped_name.endswith(f"_{parts[0]}"):
+        stripped_name = stripped_name[:-len(parts[0])-1]
+
     format_type = detect_format(dir_path)
 
-    # Features that don't require LOD in filename
-    features_without_lod = ["luse", "lsld"]
-
     if "_dm_geometric_attributes" in dir_name:
-        format_type = "geometric_attributes"
-        lod = ""
-    elif feature in features_without_lod:
-        lod = ""
+        dir_name_part = dir_name.replace("_dm_geometric_attributes", "_geometric_attributes")
+        return f"{stripped_name}_{dir_name_part}.zip"
     elif "_lod" in dir_name:
-        lod = f"_lod{dir_name.split('_lod')[1]}"
+        before_lod, lod_part = dir_name.rsplit("_lod", 1)
+        return f"{stripped_name}_{before_lod}_{format_type}_lod{lod_part}.zip"
     else:
-        raise Exception("no lod")
-
-    category = None
-    if dir_name.endswith("_Zone"):
-        category = "Zone"
-    elif len(parts) > 1 and parts[0] in ["urf", "area"]:
-        category = "_".join(parts[1:])
-
-    if category:
-        return f"{code}_{city}_{provider}_{year}_citygml_{update}_op_{feature}_{category}_{format_type}{lod}.zip"
-    else:
-        return f"{code}_{city}_{provider}_{year}_citygml_{update}_op_{feature}_{format_type}{lod}.zip"
+        return f"{stripped_name}_{dir_name}_{format_type}.zip"
 
 def process_expected_output(key, zip_name, src_dir, output_base_dir):
     key_dir = src_dir / key
