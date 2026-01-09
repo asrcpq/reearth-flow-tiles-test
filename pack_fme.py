@@ -6,7 +6,7 @@
 import sys
 import shutil
 import subprocess
-import tomllib
+import tomllib, json
 from pathlib import Path
 
 def decompress_glb_file(glb_file):
@@ -48,11 +48,68 @@ def upgrade_tileset(tileset_dir):
         backup_dir.rename(tileset_dir)
         raise
 
+def upgrade_mvt_metadata(metadata_path):
+    with open(metadata_path, 'r', encoding='utf-8') as f:
+        metadata = json.load(f)
+    assert 'json' in metadata, f"Missing 'json' field in {metadata_path}"
+    embedded = json.loads(metadata['json'])
+    assert 'vector_layers' in embedded, f"Missing 'vector_layers' in json field of {metadata_path}"
+
+    # Extract only id and empty fields dict
+    vector_layers = []
+    for layer in embedded['vector_layers']:
+        assert 'id' in layer, f"Missing 'id' in vector layer of {metadata_path}"
+        vector_layers.append({
+            'id': layer['id'],
+            'fields': {}
+        })
+
+    # Convert bounds from string "w,s,e,n" to array [w, s, e, n]
+    assert 'bounds' in metadata, f"Missing 'bounds' field in {metadata_path}"
+    bounds_array = [float(x.strip()) for x in metadata['bounds'].split(',')]
+    assert len(bounds_array) == 4, f"bounds must have 4 values in {metadata_path}"
+
+    # Convert center from string "lon,lat,zoom" to array [lon, lat, zoom]
+    assert 'center' in metadata, f"Missing 'center' field in {metadata_path}"
+    center_parts = [float(x.strip()) for x in metadata['center'].split(',')]
+    # If only lon,lat provided, add maxzoom as the zoom level
+    if len(center_parts) == 2:
+        assert 'maxzoom' in metadata, f"Missing 'maxzoom' when center has only 2 values in {metadata_path}"
+        center_parts.append(float(metadata['maxzoom']))
+    assert len(center_parts) == 3, f"center must have 3 values in {metadata_path}"
+
+    # Build TileJSON structure with required fields first
+    tilejson = {
+        'tilejson': '3.0.0',
+        'tiles': ['/{z}/{x}/{y}.mvt'],
+        'vector_layers': vector_layers
+    }
+
+    # Add optional fields that exist
+    if metadata.get("name", ""): # do not add empty name
+        tilejson['name'] = metadata['name']
+    if metadata.get("description", ""): # do not add empty description
+        tilejson['description'] = metadata['description']
+    if 'minzoom' in metadata:
+        tilejson['minzoom'] = metadata['minzoom']
+    if 'maxzoom' in metadata:
+        tilejson['maxzoom'] = metadata['maxzoom']
+
+    tilejson['bounds'] = bounds_array
+    tilejson['center'] = center_parts
+
+    # Write to tilejson.json in the same directory
+    tilejson_path = metadata_path.parent / 'tilejson.json'
+    with open(tilejson_path, 'w', encoding='utf-8') as f:
+        json.dump(tilejson, f, indent=2, ensure_ascii=False)
+
 def find_and_upgrade_tilesets(root_dir):
     for tileset_json in root_dir.rglob("tileset.json"):
         tileset_dir = tileset_json.parent
         if any(tileset_dir.rglob("*.b3dm")):
             upgrade_tileset(tileset_dir)
+    for mvt_json in root_dir.rglob("metadata.json"):
+        upgrade_mvt_metadata(mvt_json)
 
 def remove_b3dm_files(root_dir):
     for b3dm_file in root_dir.rglob("*.b3dm"):
@@ -109,10 +166,7 @@ def process_expected_output(key, zip_name, src_dir, output_base_dir):
         if work_dir.exists():
             shutil.rmtree(work_dir)
 
-def main():
-    profile_toml_path = Path(sys.argv[1])
-    src_dir = Path(sys.argv[2])
-
+def pack_fme(profile_toml_path, src_dir):
     assert profile_toml_path.exists(), f"Profile not found: {profile_toml_path}"
     assert src_dir.exists(), f"Source directory not found: {src_dir}"
 
@@ -137,5 +191,28 @@ def main():
             zip_name = auto_generate_zip_name(citygml_name, item.name, item)
             process_expected_output(item.name, zip_name, src_dir, output_base_dir)
 
+# temporary script to upgrade metadata.json in already-packed FME zips
+# debug output to inspect upgrade
+def upgrade_metadata(mvt_zip):
+    tmp_out = Path("/tmp/fme_upgrade_test")
+    shutil.rmtree(tmp_out, ignore_errors=True)
+    tmp_out.mkdir(parents=True, exist_ok=True)
+    shutil.unpack_archive(mvt_zip, tmp_out)
+    metadata_path = tmp_out / "metadata.json"
+    if not metadata_path.exists():
+        print(f"metadata.json not found in {mvt_zip}")
+        return
+    upgrade_mvt_metadata(metadata_path)
+    import os
+    os.remove(metadata_path)
+    # overwrite zip
+    shutil.make_archive(mvt_zip.with_suffix(""), 'zip', tmp_out)
+
+# for mvt_zip in Path(".").glob("**/fme/*.zip"):
+#     print(f"Upgrading {mvt_zip}...")
+#     upgrade_metadata(mvt_zip)
+
 if __name__ == "__main__":
-    main()
+    profile_toml_path = Path(sys.argv[1])
+    src_dir = Path(sys.argv[2])
+    pack_fme(profile_toml_path, src_dir)

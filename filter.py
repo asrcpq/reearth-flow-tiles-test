@@ -250,5 +250,6 @@ if __name__ == "__main__":
     citymodel_path = Path(__file__).parent / "data"
     artifacts_base = BASE_DIR / "artifacts"
     testcase_base = BASE_DIR / "testcases"
-    src_zip = citymodel_path / config["citygml_zip_name"]
+    zip_name = config["citygml_zip_name"].rsplit("_op_", 1)[0] + "_op.zip"
+    src_zip = citymodel_path / zip_name
     extract_zip_to_structure(src_zip, artifacts_base, testcase_base, test_name, config["filter"]["tree"])
