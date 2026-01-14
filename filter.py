@@ -2,6 +2,7 @@ import zipfile
 import re
 import logging
 import shutil
+import os
 
 class Node:
     def __init__(self, name, attr):
@@ -194,6 +195,25 @@ def should_include_path(path, tree):
 
     return False
 
+def create_symlinks_to_artifacts(testcase_dir, artifact_dir):
+    """Create symlinks for codelists and schemas in testcase dir pointing to artifacts."""
+    testcase_dir.mkdir(parents=True, exist_ok=True)
+
+    # Calculate relative path from testcase_dir to artifact_dir
+    rel_artifact_dir = os.path.relpath(artifact_dir, testcase_dir)
+
+    # Create symlinks for codelists and schemas
+    for dirname in ["codelists", "schemas"]:
+        link_path = testcase_dir / dirname
+        target_path = f"{rel_artifact_dir}/{dirname}"
+
+        # Remove existing symlink or directory
+        if link_path.exists() or link_path.is_symlink():
+            link_path.unlink()
+
+        # Create symlink
+        link_path.symlink_to(target_path)
+
 def extract_zip_to_structure(src_zip, artifacts_base, testcase_base, name, tree):
     """Extract zip to artifacts (codelists/schemas) and testcase (filtered GML files)."""
     artifact_dir = artifacts_base / "citymodel" / src_zip.stem
@@ -203,6 +223,9 @@ def extract_zip_to_structure(src_zip, artifacts_base, testcase_base, name, tree)
         shutil.rmtree(testcase_dir)
     except FileNotFoundError:
         pass
+
+    # Create symlinks to codelists and schemas in artifacts
+    create_symlinks_to_artifacts(testcase_dir, artifact_dir)
 
     with zipfile.ZipFile(src_zip, 'r') as zf:
         def extract(path, data = None):
@@ -235,7 +258,7 @@ def extract_zip_to_structure(src_zip, artifacts_base, testcase_base, name, tree)
                 continue
 
             # Extract matching files to testcase/citymodel/
-            if should_include_path(path, tree) and not (path.startswith("codelists/") or path.startswith("schemas/")):
+            if should_include_path(path, tree):
                 zf.extract(item, testcase_dir)
                 
 
