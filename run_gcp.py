@@ -9,7 +9,7 @@ import yaml
 import shutil
 from pathlib import Path
 
-GCP_COMMAND = '/bin/sh -c reearth-flow-worker --workflow "https://api.flow.plateau.reearth.io/workflows/01kevfk4tqwcqeg4xtx89pkrdc.yml" --metadata-path "https://api.flow.plateau.reearth.io/metadata/metadata-5d94459a-e57e-4046-9046-339c4ad8c10b.json" --var=codelists=https://assets.cms.plateau.reearth.io/assets/c9/1f2aad-f305-4b3b-b1c0-6f6751031eaa/15202_nagaoka-shi_city_2024_citygml_1_op_codelists.zip --var=objectLists=https://assets.cms.plateau.reearth.io/assets/bb/861ea3-55de-455c-ba3a-db5ad76fe2cf/15202_city_2024_objectlist_op.xlsx --var=prcs=6676 --var=schemas=01jkyfnk495fp11xek8m56wvdb --var=targetPackages=[frn] --var=cityGmlPath=https://assets.cms.plateau.reearth.io/assets/84/c10058-cb08-44d3-abe9-c78827c786b6/15202_nagaoka-shi_city_2024_citygml_1_op_frn.zip'
+GCP_COMMAND = '/bin/sh -c reearth-flow-worker --workflow "https://api.flow.plateau.reearth.io/workflows/01kex8rg2f66g4cbpftkqsmjsg.yml" --metadata-path "https://api.flow.plateau.reearth.io/metadata/metadata-75be09be-40c2-4efa-8967-447cd6153275.json" --var=schemas=01jkyfnk495fp11xek8m56wvdb --var=targetPackages=[frn] --var=cityGmlPath=https://assets.cms.plateau.reearth.io/assets/84/c10058-cb08-44d3-abe9-c78827c786b6/15202_nagaoka-shi_city_2024_citygml_1_op_frn.zip --var=codelists=https://assets.cms.plateau.reearth.io/assets/c9/1f2aad-f305-4b3b-b1c0-6f6751031eaa/15202_nagaoka-shi_city_2024_citygml_1_op_codelists.zip --var=objectLists=https://assets.cms.plateau.reearth.io/assets/bb/861ea3-55de-455c-ba3a-db5ad76fe2cf/15202_city_2024_objectlist_op.xlsx --var=prcs=6676'
 
 # Get output directory from command line
 output_dir = sys.argv[1]
@@ -57,7 +57,7 @@ subprocess.run([
     "--workflow", workflow_file
 ], env=env, cwd="/Users/tsq/Projects/reearth-flow/engine")
 
-# Move job directory contents to runtime root
+# Move job directory contents to runtime root and flow_dir
 runtime_path = Path(runtime_dir)
 projects_dir = runtime_path / "projects" / "engine" / "jobs"
 assert projects_dir.exists(), f"Projects directory not found: {projects_dir}"
@@ -66,8 +66,17 @@ job_dirs = list(projects_dir.iterdir())
 assert len(job_dirs) == 1, f"Expected exactly 1 job directory, found {len(job_dirs)}"
 
 job_dir = job_dirs[0]
+
+# Move artifacts to flow_dir
+artifacts_dir = job_dir / "artifacts"
+if artifacts_dir.exists():
+    for item in artifacts_dir.iterdir():
+        shutil.move(str(item), str(Path(flow_dir) / item.name))
+
+# Move other items to runtime root
 for item in job_dir.iterdir():
-    shutil.move(str(item), str(runtime_path / item.name))
+    if item.name != "artifacts":
+        shutil.move(str(item), str(runtime_path / item.name))
 
 # Delete projects directory
 shutil.rmtree(runtime_path / "projects")
