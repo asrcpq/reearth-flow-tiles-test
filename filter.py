@@ -66,7 +66,8 @@ class Xml:
         self.i += 1
         end = xml.find('>', self.i)
         tag = xml[self.i:end]
-        tagName, rest = re.match(r'([^\s/>]+)(.*)', tag).groups()
+        # allow newline in tag
+        tagName, rest = re.match(r'([^\s/>]+)(.*)', tag, re.DOTALL).groups()
         self.i = end + 1
         node = Node(tagName.strip(), rest.strip())
         while self.i < len(xml):
