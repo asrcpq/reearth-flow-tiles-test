@@ -69,6 +69,9 @@ class Xml:
         # allow newline in tag
         tagName, rest = re.match(r'([^\s/>]+)(.*)', tag, re.DOTALL).groups()
         self.i = end + 1
+        # Handle self-closing tags
+        if rest.rstrip().endswith('/'):
+            return Node(tagName.strip(), rest.rstrip()[:-1].strip())
         node = Node(tagName.strip(), rest.strip())
         while self.i < len(xml):
             if xml[self.i:self.i+2] == '</':
