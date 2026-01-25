@@ -48,9 +48,12 @@ def generate_html_report(output_dir):
 	html = html.replace("{{WORKFLOW_JSON}}", workflow_json.replace("\\", "\\\\").replace("`", "\\`"))
 	edge_data = collect_edge_data(output_dir / "runtime")
 	html = html.replace("{{EDGE_DATA}}", json.dumps(edge_data).replace("\\", "\\\\").replace("`", "\\`"))
-
 	with open(output_dir / "workflow.html", "w") as f:
 		f.write(html)
+
+def generate(output_dir):
+	if (output_dir / "workflow.json").exists():
+		generate_html_report(output_dir)
 
 	mvt_dirs = sorted({f.parent.parent.parent.relative_to(output_dir) for f in output_dir.rglob("*.mvt")})
 	if mvt_dirs:
@@ -68,5 +71,5 @@ def generate_html_report(output_dir):
 	return output_dir / "workflow.html"
 
 if __name__ == "__main__":
-	html_path = generate_html_report(Path(sys.argv[1]).resolve())
+	html_path = generate(Path(sys.argv[1]).resolve())
 	run(["open", "http://localhost:8080/" + str(html_path.relative_to(os.getenv("HOME")))])
