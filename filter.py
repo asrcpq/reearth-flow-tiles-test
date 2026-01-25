@@ -89,64 +89,17 @@ class Xml:
                 self.i = text_end
         return node
 
-def get_gml_id(node):
-    """Extract gml:id from node's attributes, or None if not present."""
-    for attr in node.attr.split():
-        if attr.startswith("gml:id="):
-            return attr.split('=', 1)[1].strip('"')
-    return None
-
 def collect_gml_id_recurse(node):
     result = set()
     if isinstance(node, str):
         return result
-    gml_id = get_gml_id(node)
-    if gml_id:
-        result.add(gml_id)
+    for attr in node.attr.split():
+        if attr.startswith("gml:id="):
+            gml_id = attr.split('=', 1)[1].strip('"')
+            result.add(gml_id)
     for child in node.children:
         result.update(collect_gml_id_recurse(child))
     return result
-
-def filter_tree(node, matched_ids):
-    """Filter tree: keep matched nodes + descendants + ancestors, prune sibling features.
-    Nodes without gml:id (attributes/metadata) are always preserved.
-    Returns (filtered_node_or_None, is_on_matched_path)
-    """
-    if isinstance(node, str):
-        return node, False
-
-    gml_id = get_gml_id(node)
-
-    # If this node matches, keep entire subtree
-    if gml_id and gml_id in matched_ids:
-        return node, True
-
-    # Recurse into children
-    new_children = []
-    has_match = False
-    for child in node.children:
-        filtered, on_path = filter_tree(child, matched_ids)
-        if on_path:
-            has_match = True
-            new_children.append(filtered)
-        elif isinstance(child, str):
-            new_children.append(child)  # keep whitespace
-        elif filtered is not None:
-            new_children.append(filtered)  # keep nodes without gml:id
-
-    if has_match:
-        # This node is an ancestor - keep with filtered children
-        new_node = Node(node.name, node.attr)
-        new_node.children = new_children
-        return new_node, True
-
-    # No match in descendants
-    if not gml_id:
-        # No gml:id = attribute/metadata node, keep entire subtree
-        return node, False
-
-    # Has gml:id but no matches - prune
-    return None, False
 
 def filter_gml_content(content, gml_ids):
     """Filter GML content to only include specific gml:id members."""
@@ -158,7 +111,6 @@ def filter_gml_content(content, gml_ids):
     count = [0, 0]  # kept, removed
     new_toplevels = []
     referred_gmlids = set()
-    gml_ids_set = set(gml_ids)
     assert root.name == "core:CityModel", f"Unexpected root tag: {root.name}"
     for toplevel in root.children:
         assert isinstance(toplevel, Node), "CityModel child is not a Node"
@@ -166,18 +118,21 @@ def filter_gml_content(content, gml_ids):
             assert len(toplevel.children) == 1, "Unexpected structure in cityObjectMember"
             cityobject = toplevel.children[0]
             assert isinstance(cityobject, Node), "cityObjectMember child is not a Node"
-            filtered_cityobject, matched = filter_tree(cityobject, gml_ids_set)
-            if matched:
-                count[0] += 1
-                new_toplevel = Node(toplevel.name, toplevel.attr)
-                new_toplevel.children = [filtered_cityobject]
-                referred_gmlids.update(collect_gml_id_recurse(filtered_cityobject))
-                new_toplevels.append(new_toplevel)
+            for attr in cityobject.attr.split():
+                if attr.startswith("gml:id="):
+                    gml_id = attr.split('=', 1)[1].strip('"')
+                    if gml_id in gml_ids:
+                        count[0] += 1
+                        break
             else:
                 count[1] += 1
+                continue
+            referred_gmlids.update(collect_gml_id_recurse(cityobject))
+            new_toplevels.append(toplevel)
         else:
             new_toplevels.append(toplevel)
     root.children = new_toplevels
+    filtered_text = xml.build()
     print("<core:cityObjectMember> kept:", count[0], "removed:", count[1])
     print("referred gml:ids:", len(referred_gmlids))
 
