@@ -142,7 +142,8 @@ function renderTreeValue(value, path = '', depth = 0) {
     return html;
   }
 
-  return `<span class="tree-value">${value}</span>`;
+  const isBold = typeof value !== 'string';
+  return `<span class="tree-value"${isBold ? ' style="font-weight:bold"' : ''}>${value}</span>`;
 }
 
 let currentDisplayFeatures = [];
