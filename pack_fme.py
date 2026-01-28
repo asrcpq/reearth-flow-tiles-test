@@ -9,22 +9,6 @@ import subprocess
 import tomllib, json
 from pathlib import Path
 
-def decompress_glb_file(glb_file):
-    temp_file = glb_file.with_suffix(".glb.tmp")
-    shutil.copy2(glb_file, temp_file)
-    try:
-        subprocess.run(
-            ["npx", "glb-decompress", str(temp_file)],
-            check=True,
-            capture_output=True
-        )
-        temp_file.replace(glb_file)
-    except:
-        if temp_file.exists():
-            temp_file.unlink()
-        raise
-
-
 def upgrade_tileset(tileset_dir):
     tileset_json = tileset_dir / "tileset.json"
     assert tileset_json.exists(), f"tileset.json not found in {tileset_dir}"
@@ -38,8 +22,13 @@ def upgrade_tileset(tileset_dir):
             "--targetVersion", "1.1"
         ], check=True)
 
-        for glb_file in tileset_dir.rglob("*.glb"):
-            decompress_glb_file(glb_file)
+        # Collect all GLB files and decompress them in batch
+        glb_files = list(tileset_dir.rglob("*.glb"))
+        if glb_files:
+            subprocess.run(
+                ["glb-decompress"] + [str(f) for f in glb_files],
+                check=True,
+            )
 
         shutil.rmtree(backup_dir)
     except:
