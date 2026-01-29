@@ -48,12 +48,14 @@ class Xml:
     def __init__(self, s):
         self.i = 0
         s = s.strip()
+        # strip BOM
+        if s.startswith('\ufeff'):
+            s = s[1:]
         if s.startswith('<?xml'):
             self.header, s = s.split('?>', 1)
             self.header += '?>'
         else:
             self.header = ''
-        print("header:", self.header, "rest length:", len(s))
         self.root = self._parse(s.strip())
     def build(self):
         result = []
