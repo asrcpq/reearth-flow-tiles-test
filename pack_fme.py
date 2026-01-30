@@ -16,7 +16,7 @@ def upgrade_tileset(tileset_dir):
     tileset_dir.rename(backup_dir)
     try:
         subprocess.run([
-            "npx", "3d-tiles-tools", "upgrade",
+            "3d-tiles-tools", "upgrade",
             "-i", str(backup_dir / "tileset.json"),
             "-o", str(tileset_dir),
             "--targetVersion", "1.1"
