@@ -56,10 +56,7 @@
     <div id="sidebar">
         <h2>3D Tiles Viewer</h2>
         <div style="margin-bottom: 15px;">
-            <label style="display: flex; align-items: center; gap: 8px;">
-                <input type="checkbox" id="colorModeToggle" checked>
-                <span>Use GML ID Colors</span>
-            </label>
+            <input type="text" id="colorExpression" value="gml_id" placeholder="Property expression">
         </div>
         <div id="layersSection">
             <h3>Layers</h3>
@@ -70,7 +67,7 @@
         let viewer;
         let layerIdCounter = 0;
         const layers = new Map(); // Map of layer ID to { tileset, color, urlInput, checkbox }
-        let useGmlIdColors = true; // Color mode state
+        let colorExpression = 'gml_id'; // Expression to use for coloring
 
         // Injected tile list
         const tilesetUrls = {{TILES_LIST}};
@@ -80,16 +77,17 @@
                 terrainProvider: undefined
             });
 
-            // Setup color mode toggle
-            const colorModeToggle = document.getElementById('colorModeToggle');
-            colorModeToggle.addEventListener('change', () => {
-                useGmlIdColors = colorModeToggle.checked;
-                // Update all existing tilesets
-                layers.forEach(layerData => {
-                    if (layerData.tileset) {
-                        applyTilesetStyle(layerData.tileset);
-                    }
-                });
+            // Setup color expression input (Enter to apply)
+            const colorExpressionInput = document.getElementById('colorExpression');
+            colorExpressionInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') {
+                    colorExpression = colorExpressionInput.value;
+                    layers.forEach(layerData => {
+                        if (layerData.tileset) {
+                            applyTilesetStyle(layerData.tileset);
+                        }
+                    });
+                }
             });
 
             // Load all tilesets
@@ -126,28 +124,50 @@
             }
         }
 
+        // Function to evaluate property expression
+        function evaluateExpression(feature, expression) {
+            if (!expression) return '';
+
+            // Handle dot notation and array indices like .foo.bar[0].baz
+            const path = expression.replace(/^\./, '').replace(/\[(\d+)\]/g, '.$1');
+            const parts = path.split('.');
+
+            let value = feature;
+            for (const part of parts) {
+                if (value && typeof value === 'object') {
+                    value = value.getProperty ? value.getProperty(part) : value[part];
+                } else {
+                    return '';
+                }
+            }
+
+            return String(value || '');
+        }
+
         // Function to apply style to tileset
         function applyTilesetStyle(tileset) {
-            if (useGmlIdColors) {
-                // Use hash of gml_id string to generate color
-                tileset.style = new Cesium.Cesium3DTileStyle({
-                    color: {
-                        evaluateColor: function(feature, result) {
-                            const gmlId = feature.getProperty('gml_id') || '';
-                            let hash = 0;
-                            for (let i = 0; i < gmlId.length; i++) {
-                                hash = ((hash << 5) - hash) + gmlId.charCodeAt(i);
-                                hash = hash & hash;
-                            }
-                            const hue = Math.abs(hash) % 360;
-                            return Cesium.Color.fromHsl(hue / 360, 0.7, 0.5, 1.0, result);
-                        }
-                    }
-                });
-            } else {
-                // Use default texture rendering (no custom style)
+            if (!colorExpression || !colorExpression.trim()) {
                 tileset.style = undefined;
+                return;
             }
+
+            tileset.style = new Cesium.Cesium3DTileStyle({
+                color: {
+                    evaluateColor: function(feature, result) {
+                        const value = evaluateExpression(feature, colorExpression);
+                        if (!value) {
+                            return undefined;
+                        }
+                        let hash = 0;
+                        for (let i = 0; i < value.length; i++) {
+                            hash = ((hash << 5) - hash) + value.charCodeAt(i);
+                            hash = hash & hash;
+                        }
+                        const hue = Math.abs(hash) % 360;
+                        return Cesium.Color.fromHsl(hue / 360, 0.7, 0.5, 1.0, result);
+                    }
+                }
+            });
         }
 
         // Function to add layer UI

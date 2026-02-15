@@ -103,42 +103,66 @@ def collect_gml_id_recurse(node):
         result.update(collect_gml_id_recurse(child))
     return result
 
-def filter_gml_content(content, gml_ids):
-    """Filter GML content to only include specific gml:id members."""
-    text = content.decode('utf-8')
-    xml = Xml(text)
-    root = xml.root
+def get_gml_id(node):
+    """Extract gml:id from a node's attributes, or None."""
+    if isinstance(node, str):
+        return None
+    for attr in node.attr.split():
+        if attr.startswith("gml:id="):
+            return attr.split('=', 1)[1].strip('"')
+    return None
 
-    # Round #1: filter cityObjectMember nodes and collect referred gml:ids inside them
-    count = [0, 0]  # kept, removed
-    new_toplevels = []
-    referred_gmlids = set()
-    assert root.name == "core:CityModel", f"Unexpected root tag: {root.name}"
-    for toplevel in root.children:
-        assert isinstance(toplevel, Node), "CityModel child is not a Node"
-        if toplevel.name == "core:cityObjectMember":
-            assert len(toplevel.children) == 1, "Unexpected structure in cityObjectMember"
-            cityobject = toplevel.children[0]
-            assert isinstance(cityobject, Node), "cityObjectMember child is not a Node"
-            for attr in cityobject.attr.split():
-                if attr.startswith("gml:id="):
-                    gml_id = attr.split('=', 1)[1].strip('"')
-                    if gml_id in gml_ids:
-                        count[0] += 1
-                        break
-            else:
-                count[1] += 1
-                continue
-            referred_gmlids.update(collect_gml_id_recurse(cityobject))
-            new_toplevels.append(toplevel)
-        else:
-            new_toplevels.append(toplevel)
-    root.children = new_toplevels
-    filtered_text = xml.build()
-    print("<core:cityObjectMember> kept:", count[0], "removed:", count[1])
-    print("referred gml:ids:", len(referred_gmlids))
+def is_subfeature(node):
+    """A sub-feature has gml:id and is not a gml: geometry element."""
+    return isinstance(node, Node) and get_gml_id(node) is not None and not node.name.startswith("gml:")
 
-    # Round #2: filter appearanceMember nodes based on referred gml:ids
+def contains_subfeature(node):
+    """Check if node or any descendant is a sub-feature."""
+    if isinstance(node, str):
+        return False
+    if is_subfeature(node):
+        return True
+    return any(contains_subfeature(c) for c in node.children)
+
+def find_path_to(node, target_id):
+    """Find path from node to descendant with target gml:id. Returns list of nodes or None."""
+    if isinstance(node, str):
+        return None
+    if get_gml_id(node) == target_id:
+        return [node]
+    for child in node.children:
+        path = find_path_to(child, target_id)
+        if path is not None:
+            return [node] + path
+    return None
+
+def prune_to_targets(node, target_ids):
+    """Prune tree: keep paths to targets and non-feature siblings; remove the rest.
+    Returns True if any target found."""
+    path_node_ids = set()
+    for tid in target_ids:
+        path = find_path_to(node, tid)
+        if path:
+            path_node_ids.update(id(n) for n in path)
+    if not path_node_ids:
+        return False
+    def _prune(n):
+        new_children = []
+        for child in n.children:
+            if isinstance(child, str):
+                new_children.append(child)
+            elif id(child) in path_node_ids:
+                _prune(child)
+                new_children.append(child)
+            elif not contains_subfeature(child):
+                new_children.append(child)
+        n.children = new_children
+    _prune(node)
+    return True
+
+def filter_appearance_members(root, referred_gmlids):
+    """Filter appearance members to only include targets in referred_gmlids.
+    Returns set of referred image URIs."""
     count = [0, 0]  # kept, removed
     referred_images = set()
     for toplevel in root.children:
@@ -149,7 +173,6 @@ def filter_gml_content(content, gml_ids):
             for member in appearance.children:
                 assert isinstance(member, Node), "Appearance child is not a Node"
                 if member.name == "app:surfaceDataMember":
-                    # we need to process two tags under surfaceDataMember: X3DMaterial and ParameterizedTexture
                     member2 = member.only_node_child()
                     new_children = []
                     member_referred = False
@@ -161,8 +184,6 @@ def filter_gml_content(content, gml_ids):
                                 referred_images2.add(child.only_text_child())
                             new_children.append(child)
                             continue
-                        # find children like <app:target>#fme-gen-833a934e-0449-4161-8b79-3e632df34a4b</app:target>
-                        # or <app:target uri="#fme-gen-7efa16e4-50f2-4799-bea8-79e99ef207b3">...</app:target>
                         uri = None
                         for attr in child.attr.split():
                             if attr.startswith("uri="):
@@ -179,9 +200,54 @@ def filter_gml_content(content, gml_ids):
                     if member_referred:
                         referred_images.update(referred_images2)
                     member2.children = new_children
+            # Remove surfaceDataMembers with no remaining targets
+            appearance.children = [
+                m for m in appearance.children
+                if not isinstance(m, Node) or m.name != "app:surfaceDataMember"
+                or any(isinstance(c, Node) and c.name == "app:target" for c in m.only_node_child().children)
+            ]
     print("<app:target> kept:", count[0], "removed:", count[1])
     for image in referred_images:
         print("referred image:", image)
+    return referred_images
+
+def filter_gml_content(content, gml_ids):
+    """Filter GML content to only include specific gml:id members.
+    Supports both top-level and nested gml:ids."""
+    text = content.decode('utf-8')
+    xml = Xml(text)
+    root = xml.root
+
+    gml_ids = set(gml_ids)
+    # Round #1: filter cityObjectMember nodes and collect referred gml:ids inside them
+    count = [0, 0]  # kept, removed
+    new_toplevels = []
+    referred_gmlids = set()
+    assert root.name == "core:CityModel", f"Unexpected root tag: {root.name}"
+    for toplevel in root.children:
+        assert isinstance(toplevel, Node), "CityModel child is not a Node"
+        if toplevel.name != "core:cityObjectMember":
+            new_toplevels.append(toplevel)
+            continue
+        cityobject = toplevel.only_node_child()
+        top_id = get_gml_id(cityobject)
+        if top_id in gml_ids:
+            # Top-level match
+            count[0] += 1
+        elif prune_to_targets(cityobject, gml_ids):
+            # Nested match found, tree pruned
+            count[0] += 1
+        else:
+            count[1] += 1
+            continue
+        referred_gmlids.update(collect_gml_id_recurse(cityobject))
+        new_toplevels.append(toplevel)
+    root.children = new_toplevels
+    print("<core:cityObjectMember> kept:", count[0], "removed:", count[1])
+    print("referred gml:ids:", len(referred_gmlids))
+
+    # Round #2: filter appearanceMember nodes based on referred gml:ids
+    referred_images = filter_appearance_members(root, referred_gmlids)
 
     return xml.build().encode(), referred_images
 

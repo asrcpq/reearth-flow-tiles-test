@@ -24,6 +24,9 @@
         <div id="gridToggle">
             <label><input type="checkbox" id="showGrid"> Show Tile Grid</label>
         </div>
+        <div style="margin-bottom: 15px;">
+            <label>Color by attribute: <input type="text" id="colorExpression" placeholder="Property name (e.g. gml_id)" style="width: 200px;"></label>
+        </div>
         <div id="layersSection">
             <div id="layersList"></div>
         </div>
@@ -48,6 +51,13 @@
         let layerIdCounter = 0;
         const layers = new Map(); // Map of layer ID to { olLayer, color, urlInput }
         let lastSelectionExtent = null; // Store the last selection extent
+        let colorExpression = '';
+
+        function hashToHue(str) {
+            let hash = 0;
+            for (let i = 0; i < str.length; i++) hash = ((hash << 5) - hash) + str.charCodeAt(i) | 0;
+            return Math.abs(hash) % 360;
+        }
 
         const highlightSource = new ol.source.Vector();
         const highlightLayer = new ol.layer.Vector({
@@ -99,11 +109,22 @@
                     let geom = feature.getGeometry();
                     let geomType = geom ? geom.getType() : 'null';
 
+                    let strokeColor = color.color;
+                    let fillColor = color.fill;
+                    if (colorExpression) {
+                        const val = feature.get(colorExpression);
+                        if (val != null) {
+                            const hue = hashToHue(String(val));
+                            strokeColor = `hsl(${hue}, 70%, 40%)`;
+                            fillColor = `hsla(${hue}, 70%, 50%, 0.3)`;
+                        }
+                    }
+
                     if (geomType === 'Point' || geomType === 'MultiPoint') {
                         return new ol.style.Style({
                             image: new ol.style.Circle({
                                 radius: 6,
-                                fill: new ol.style.Fill({ color: color.color }),
+                                fill: new ol.style.Fill({ color: strokeColor }),
                                 stroke: new ol.style.Stroke({ color: '#fff', width: 2 })
                             })
                         });
@@ -112,15 +133,15 @@
                     if (geomType === 'LineString' || geomType === 'MultiLineString') {
                         return new ol.style.Style({
                             stroke: new ol.style.Stroke({
-                                color: color.color,
+                                color: strokeColor,
                                 width: 2
                             })
                         });
                     }
 
                     return new ol.style.Style({
-                        fill: new ol.style.Fill({ color: color.fill }),
-                        stroke: new ol.style.Stroke({ color: color.color, width: 1 })
+                        fill: new ol.style.Fill({ color: fillColor }),
+                        stroke: new ol.style.Stroke({ color: strokeColor, width: 1 })
                     });
                 }
             });
@@ -194,6 +215,14 @@
         // Toggle tile grid visibility
         document.getElementById('showGrid').addEventListener('change', (e) => {
             tileDebugLayer.setVisible(e.target.checked);
+        });
+
+        // Color by attribute (Enter to apply)
+        document.getElementById('colorExpression').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                colorExpression = e.target.value;
+                layers.forEach(data => data.olLayer.changed());
+            }
         });
 
         map.addInteraction(new ol.interaction.DragPan({ condition: evt => evt.originalEvent.button === 1 && !evt.originalEvent.ctrlKey }));

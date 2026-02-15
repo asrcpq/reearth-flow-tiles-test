@@ -64,7 +64,7 @@ def read_b3dm_metadata(filepath):
             feature_table_json_str = feature_table_json_data.rstrip(b'\x00\x20').decode('utf-8')
             try:
                 feature_table = json.loads(feature_table_json_str)
-                print(json.dumps(feature_table, indent=2))
+                print(json.dumps(feature_table, indent=2, ensure_ascii=False))
             except json.JSONDecodeError as e:
                 print(f"Error parsing Feature Table JSON: {e}")
                 print(f"Raw data: {feature_table_json_str[:200]}")
@@ -86,7 +86,7 @@ def read_b3dm_metadata(filepath):
             batch_table_json_str = batch_table_json_data.rstrip(b'\x00\x20').decode('utf-8')
             try:
                 batch_table = json.loads(batch_table_json_str)
-                print(json.dumps(batch_table, indent=2))
+                print(json.dumps(batch_table, indent=2, ensure_ascii=False))
                 
                 # Display batch table statistics
                 if isinstance(batch_table, dict):

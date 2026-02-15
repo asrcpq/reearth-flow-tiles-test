@@ -18,6 +18,9 @@
   .tree-item{font-size:12px;margin-left:16px}
   .tree-key{font-weight:600}
   .tree-value{color:#666;word-break:break-all;white-space:pre-wrap}
+  .tree-number{color:#098658}
+  .tree-bool{color:#0000ff}
+  .tree-null{color:#808080}
   details{margin-left:16px}
   summary{cursor:pointer;user-select:none}
   .filter-input{width:100%}
@@ -25,7 +28,7 @@
 
 <div id=panel>
   <select id=graphSel style="width:100%;padding:4px"></select>
-  <input type="text" class="filter-input" id="filterInput" placeholder="Filter: feature => feature.attributes.name === 'example'" value="f => " />
+  <div id="searchFields"></div>
   <div id="edgeInfo"></div>
   <div id="featureList"></div>
 </div>
@@ -38,12 +41,20 @@
 <script src="https://unpkg.com/dagre@0.8.5/dist/dagre.min.js"></script>
 
 <script>
+class JsonNumber {
+  constructor(raw) { this.raw = raw; }
+  valueOf() { return Number(this.raw); }
+  toString() { return this.raw; }
+}
+const jsonReviver = (k, v, ctx) => typeof v === 'number' ? new JsonNumber(ctx.source) : v;
+
 const workflowDoc = JSON.parse(`{{WORKFLOW_JSON}}`);
-const edgeDataMap = JSON.parse(`{{EDGE_DATA}}`);
+const edgeIndexMap = JSON.parse(`{{EDGE_INDEX}}`);
+const SEARCH_FIELDS = JSON.parse(`{{SEARCH_FIELDS}}`);
 const graphSel = document.getElementById('graphSel');
 const edgeInfo = document.getElementById('edgeInfo');
 const featureList = document.getElementById('featureList');
-const filterInput = document.getElementById('filterInput');
+const searchFieldsDiv = document.getElementById('searchFields');
 const panel = document.getElementById('panel');
 const resizer = document.getElementById('resizer');
 const svg = d3.select('#svg');
@@ -51,6 +62,17 @@ let currentEdgeId = null;
 let currentFeatures = [];
 let displayedCount = 0;
 const BATCH_SIZE = 50;
+
+// Generate search inputs
+SEARCH_FIELDS.forEach(field => {
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'filter-input';
+  input.placeholder = field;
+  input.dataset.field = field;
+  input.addEventListener('keydown', e => { if(e.key === 'Enter') applyFilter(); });
+  searchFieldsDiv.appendChild(input);
+});
 
 let isResizing = false;
 resizer.addEventListener('mousedown', (e) => {
@@ -77,8 +99,13 @@ function updateSvgSize(){
 }
 updateSvgSize();
 
+async function fetchFeature(edgeId, featureId) {
+  const response = await fetch(`simplified_edgedata/${edgeId}/${featureId}.json`);
+  return JSON.parse(await response.text(), jsonReviver);
+}
+
 function loadEdgeData(edgeId){
-  const edgeData = edgeDataMap[edgeId];
+  const edgeData = edgeIndexMap[edgeId];
   if(!edgeData){
     edgeInfo.innerHTML = '<li>No data available</li>';
     featureList.innerHTML = '';
@@ -93,43 +120,34 @@ function loadEdgeData(edgeId){
 }
 
 function applyFilter(){
-  const filterCode = filterInput.value.trim();
-  const indexed = currentFeatures.map((f, i) => ({feature: f, originalIndex: i}));
-
-  if(!filterCode){
-    displayEdgeData(currentEdgeId, indexed);
-    return;
-  }
-
-  try {
-    const filterFn = filterCode.includes('=>') ? eval(`(${filterCode})`) : eval(`(f => ${filterCode})`);
-    displayEdgeData(currentEdgeId, indexed.filter(item => filterFn(item.feature)));
-  } catch(err) {
-    console.log(`filter error: ${err.message}`);
-    displayEdgeData(currentEdgeId, indexed);
-  }
+  const inputs = searchFieldsDiv.querySelectorAll('input');
+  let filtered = currentFeatures;
+  inputs.forEach(input => {
+    const query = input.value.trim();
+    if(query) {
+      const field = input.dataset.field;
+      filtered = filtered.filter(f => String(f[field] ?? '').toLowerCase().includes(query.toLowerCase()));
+    }
+  });
+  displayEdgeData(currentEdgeId, filtered);
 }
-
-filterInput.addEventListener('keydown', (e) => {
-  if(e.key === 'Enter'){
-    applyFilter();
-  }
-});
 
 function renderTreeValue(value, path = '', depth = 0) {
   if (value === null || value === undefined) {
-    return `<span class="tree-value">null</span>`;
+    return `<span class="tree-null">null</span>`;
   }
 
-  if (typeof value === 'object' && !Array.isArray(value)) {
-    const keys = Object.keys(value);
-    if (keys.length === 0) return `<span class="tree-value">{}</span>`;
-    let html = `<details${depth <= 1 ? ' open' : ''}><summary>{${keys.length}}</summary>`;
-    for (const [k, v] of Object.entries(value)) {
-      html += `<div class="tree-item"><span class="tree-key">${k}:</span> ${renderTreeValue(v, path + '.' + k, depth + 1)}</div>`;
-    }
-    html += `</details>`;
-    return html;
+  if (value instanceof JsonNumber) {
+    return `<span class="tree-number">${value.raw}</span>`;
+  }
+
+  if (typeof value === 'boolean') {
+    return `<span class="tree-bool">${value}</span>`;
+  }
+
+  if (typeof value === 'string') {
+    const escaped = value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    return `<span class="tree-value">${escaped}</span>`;
   }
 
   if (Array.isArray(value)) {
@@ -142,49 +160,51 @@ function renderTreeValue(value, path = '', depth = 0) {
     return html;
   }
 
-  const isBold = typeof value !== 'string';
-  return `<span class="tree-value"${isBold ? ' style="font-weight:bold"' : ''}>${value}</span>`;
+  if (typeof value === 'object') {
+    const keys = Object.keys(value);
+    if (keys.length === 0) return `<span class="tree-value">{}</span>`;
+    let html = `<details${depth <= 1 ? ' open' : ''}><summary>{${keys.length}}</summary>`;
+    for (const [k, v] of Object.entries(value)) {
+      html += `<div class="tree-item"><span class="tree-key">${k}:</span> ${renderTreeValue(v, path + '.' + k, depth + 1)}</div>`;
+    }
+    html += `</details>`;
+    return html;
+  }
+
+  return `<span class="tree-value">${value}</span>`;
 }
 
 let currentDisplayFeatures = [];
 
-function displayEdgeData(edgeId, featuresWithIndices){
-  currentDisplayFeatures = featuresWithIndices;
+async function displayEdgeData(edgeId, features){
+  currentDisplayFeatures = features;
   displayedCount = 0;
 
   const totalCount = currentFeatures.length;
-  const filteredCount = featuresWithIndices.length;
+  const filteredCount = features.length;
   const countText = filteredCount < totalCount ? `${filteredCount} / ${totalCount}` : `${totalCount}`;
 
   edgeInfo.innerHTML = `Edge ID: ${edgeId}: ${countText} features`;
   featureList.innerHTML = '';
 
-  loadMoreFeatures();
+  await loadMoreFeatures();
 }
 
-function loadMoreFeatures(){
+async function loadMoreFeatures(){
   if(!featureList) return;
-
   const endIndex = Math.min(displayedCount + BATCH_SIZE, currentDisplayFeatures.length);
+  const batch = currentDisplayFeatures.slice(displayedCount, endIndex);
+  const features = await Promise.all(batch.map(f => fetchFeature(currentEdgeId, f.id)));
+
   let html = '';
-
-  for(let idx = displayedCount; idx < endIndex; idx++){
-    const item = currentDisplayFeatures[idx];
-    const originalIdx = item.originalIndex;
-    const feature = item.feature;
-    html += `<div class="info-section">`;
-    html += renderTreeValue(feature, `feature-${originalIdx}`);
-    html += `</div>`;
+  for(const feature of features){
+    html += `<div class="info-section">${renderTreeValue(feature)}</div>`;
   }
-
   featureList.insertAdjacentHTML('beforeend', html);
   displayedCount = endIndex;
 
-  // Remove old load more button if exists
   const oldBtn = document.getElementById('loadMoreBtn');
   if(oldBtn) oldBtn.remove();
-
-  // Add load more button if there are more features
   if(displayedCount < currentDisplayFeatures.length){
     const remaining = currentDisplayFeatures.length - displayedCount;
     featureList.insertAdjacentHTML('beforeend',
@@ -266,7 +286,7 @@ function layoutAndRender(graph){
   for (const e of g.edges()) {
     const ed = g.edge(e);
     const edgeId = ed.edgeId;
-    const edgeData = edgeDataMap[edgeId];
+    const edgeData = edgeIndexMap[edgeId];
     container.append('path')
       .attr('class', 'edgePath')
       .attr('d', lineFromPoints(ed.points));

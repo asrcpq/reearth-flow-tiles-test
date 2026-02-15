@@ -124,7 +124,7 @@ def auto_generate_zip_name(citygml_name, dir_name, dir_path):
     format_type = detect_format(dir_path)
 
     if "_dm_geometric_attributes" in dir_name:
-        return f"{stripped_name}_{dir_name_part}.zip"
+        return f"{stripped_name}_{dir_name}.zip"
     elif "_lod" in dir_name:
         before_lod, lod_part = dir_name.rsplit("_lod", 1)
         return f"{stripped_name}_{before_lod}_{format_type}_lod{lod_part}.zip"
