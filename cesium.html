@@ -124,6 +124,21 @@
             }
         }
 
+        // MurmurHash3 finalizer — maps a string to a stable uint32
+        function hashString(str) {
+            let h = 0x811c9dc5; // FNV offset basis as seed
+            for (let i = 0; i < str.length; i++) {
+                h = Math.imul(h ^ str.charCodeAt(i), 0x01000193); // FNV prime
+            }
+            // Avalanche (MurmurHash3 mix)
+            h ^= h >>> 16;
+            h = Math.imul(h, 0x85ebca6b) | 0;
+            h ^= h >>> 13;
+            h = Math.imul(h, 0xc2b2ae35) | 0;
+            h ^= h >>> 16;
+            return h >>> 0; // unsigned 32-bit
+        }
+
         // Function to evaluate property expression
         function evaluateExpression(feature, expression) {
             if (!expression) return '';
@@ -158,12 +173,7 @@
                         if (!value) {
                             return undefined;
                         }
-                        let hash = 0;
-                        for (let i = 0; i < value.length; i++) {
-                            hash = ((hash << 5) - hash) + value.charCodeAt(i);
-                            hash = hash & hash;
-                        }
-                        const hue = Math.abs(hash) % 360;
+                        const hue = hashString(value) % 360;
                         return Cesium.Color.fromHsl(hue / 360, 0.7, 0.5, 1.0, result);
                     }
                 }
