@@ -288,7 +288,7 @@ def create_symlinks_to_artifacts(testcase_dir, artifact_dir):
 
 def extract_zip_to_structure(src_zip, artifacts_base, testcase_base, name, tree):
     """Extract zip to artifacts (codelists/schemas) and testcase (filtered GML files)."""
-    artifact_dir = artifacts_base / "citymodel" / src_zip.stem
+    artifact_dir = artifacts_base / src_zip.stem
     artifact_dir.mkdir(parents=True, exist_ok=True)
     testcase_dir = testcase_base / name / "citymodel"
     try:

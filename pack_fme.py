@@ -117,9 +117,9 @@ def detect_format(dir_path):
 
 def auto_generate_zip_name(citygml_name, dir_name, dir_path):
     stripped_name = citygml_name.replace(".zip", "")
-    parts = dir_name.split("_")
-    if parts[0] and stripped_name.endswith(f"_{parts[0]}"):
-        stripped_name = stripped_name[:-len(parts[0])-1]
+    op_idx = stripped_name.find("_op_")
+    if op_idx >= 0:
+        stripped_name = stripped_name[:op_idx + 3]  # up to and including "_op"
 
     format_type = detect_format(dir_path)
 
