@@ -73,9 +73,6 @@ def generate_html_report(output_dir):
 		f.write(html)
 
 def generate(output_dir):
-	if (output_dir / "workflow.json").exists():
-		generate_html_report(output_dir)
-
 	mvt_dirs = sorted({f.parent.parent.parent.relative_to(output_dir) for f in output_dir.rglob("*.mvt")})
 	if mvt_dirs:
 		tiles = [str(d / "{z}" / "{x}" / "{y}.mvt") for d in mvt_dirs]
@@ -88,6 +85,9 @@ def generate(output_dir):
 		tiles = [str(f.relative_to(output_dir)) for f in tilesets]
 		html = open(Path(__file__).parent / "cesium.html").read().replace("{{TILES_LIST}}", json.dumps(tiles))
 		(output_dir / "cesium-viewer.html").write_text(html)
+
+	if (output_dir / "workflow.json").exists():
+		generate_html_report(output_dir)
 
 	return output_dir / "workflow.html"
 
