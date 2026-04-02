@@ -23,12 +23,12 @@
   .tree-null{color:#808080}
   details{margin-left:16px}
   summary{cursor:pointer;user-select:none}
-  .filter-input{width:100%}
 </style>
 
 <div id=panel>
   <select id=graphSel style="width:100%;padding:4px"></select>
-  <div id="searchFields"></div>
+  <div id="filterRows"></div>
+  <button onclick="addFilterRow()">+ filter</button>
   <div id="edgeInfo"></div>
   <div id="featureList"></div>
 </div>
@@ -49,12 +49,11 @@ class JsonNumber {
 const jsonReviver = (k, v, ctx) => typeof v === 'number' ? new JsonNumber(ctx.source) : v;
 
 const workflowDoc = JSON.parse(`{{WORKFLOW_JSON}}`);
-const edgeIndexMap = JSON.parse(`{{EDGE_INDEX}}`);
-const SEARCH_FIELDS = JSON.parse(`{{SEARCH_FIELDS}}`);
+const edgeIndexMap = JSON.parse(`{{PORT_INDEX}}`);
 const graphSel = document.getElementById('graphSel');
 const edgeInfo = document.getElementById('edgeInfo');
 const featureList = document.getElementById('featureList');
-const searchFieldsDiv = document.getElementById('searchFields');
+const filterRowsDiv = document.getElementById('filterRows');
 const panel = document.getElementById('panel');
 const resizer = document.getElementById('resizer');
 const svg = d3.select('#svg');
@@ -63,16 +62,13 @@ let currentFeatures = [];
 let displayedCount = 0;
 const BATCH_SIZE = 50;
 
-// Generate search inputs
-SEARCH_FIELDS.forEach(field => {
-  const input = document.createElement('input');
-  input.type = 'text';
-  input.className = 'filter-input';
-  input.placeholder = field;
-  input.dataset.field = field;
-  input.addEventListener('keydown', e => { if(e.key === 'Enter') applyFilter(); });
-  searchFieldsDiv.appendChild(input);
-});
+function addFilterRow(field='', value='') {
+  const row = document.createElement('div');
+  row.innerHTML = `<input placeholder="field path" value="${field}"> <input placeholder="value" value="${value}"> <button onclick="this.parentElement.remove();applyFilter()">x</button>`;
+  row.querySelectorAll('input').forEach(i => i.addEventListener('keydown', e => { if(e.key==='Enter') applyFilter(); }));
+  filterRowsDiv.appendChild(row);
+}
+addFilterRow('.attributes.gml_id');
 
 let isResizing = false;
 resizer.addEventListener('mousedown', (e) => {
@@ -100,7 +96,7 @@ function updateSvgSize(){
 updateSvgSize();
 
 async function fetchFeature(edgeId, featureId) {
-  const response = await fetch(`simplified_edgedata/${edgeId}/${featureId}.json`);
+  const response = await fetch(`simplified_portdata/${edgeId}/${featureId}.json`);
   return JSON.parse(await response.text(), jsonReviver);
 }
 
@@ -120,12 +116,12 @@ function loadEdgeData(edgeId){
 }
 
 function applyFilter(){
-  const inputs = searchFieldsDiv.querySelectorAll('input');
   let filtered = currentFeatures;
-  inputs.forEach(input => {
-    const query = input.value.trim();
-    if(query) {
-      const field = input.dataset.field;
+  filterRowsDiv.querySelectorAll('div').forEach(row => {
+    const [fieldInput, valueInput] = row.querySelectorAll('input');
+    const field = fieldInput.value.trim();
+    const query = valueInput.value.trim();
+    if(field && query) {
       filtered = filtered.filter(f => String(f[field] ?? '').toLowerCase().includes(query.toLowerCase()));
     }
   });
@@ -184,7 +180,7 @@ async function displayEdgeData(edgeId, features){
   const filteredCount = features.length;
   const countText = filteredCount < totalCount ? `${filteredCount} / ${totalCount}` : `${totalCount}`;
 
-  edgeInfo.innerHTML = `Edge ID: ${edgeId}: ${countText} features`;
+  edgeInfo.innerHTML = `${edgeId}<br>${countText} features`;
   featureList.innerHTML = '';
 
   await loadMoreFeatures();
@@ -267,9 +263,11 @@ function layoutAndRender(graph){
     g.setNode(n.id, {label: name + '\n' + action, width, height: 40, name, action});
   }
   for (const e of graph.edges||[]) {
-    // For subgraph edges, prefix with parent node ID to match file naming
-    const edgeId = parentNodeId ? `${parentNodeId}.${e.id}` : e.id;
-    g.setEdge(e.from, e.to, {edgeId: edgeId}, e.id);
+    const fromPort = e.fromPort || 'default';
+    const portFileId = parentNodeId
+      ? `${parentNodeId}.${e.from}.${fromPort}`
+      : `${e.from}.${fromPort}`;
+    g.setEdge(e.from, e.to, {edgeId: portFileId}, e.id);
   }
   dagre.layout(g);
 

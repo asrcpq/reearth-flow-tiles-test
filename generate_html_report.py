@@ -28,20 +28,20 @@ def simplify_json(obj, max_items=5):
 	else:
 		return obj
 
-def collect_edge_index(job_dir, output_dir):
+def collect_port_index(job_dir, output_dir):
 	"""Write simplified features to files and return index."""
 	import shutil
-	edge_index = {}
+	port_index = {}
 	feature_store = job_dir / "feature-store"
-	simplified_dir = output_dir / "simplified_edgedata"
+	simplified_dir = output_dir / "simplified_portdata"
 	if simplified_dir.exists():
 		shutil.rmtree(simplified_dir)
 	files = list(feature_store.glob("*.jsonl"))
 	for idx, jsonl_file in enumerate(files):
 		print(f"{idx+1}/{len(files)} Processing {jsonl_file.name}...")
-		edge_id = jsonl_file.stem
-		edge_dir = simplified_dir / edge_id
-		edge_dir.mkdir(parents=True)
+		port_id = jsonl_file.stem
+		port_dir = simplified_dir / port_id
+		port_dir.mkdir(parents=True)
 		features = []
 		with open(jsonl_file) as f:
 			for line in f:
@@ -54,10 +54,10 @@ def collect_edge_index(job_dir, output_dir):
 				for field in SEARCH_FIELDS:
 					entry[field] = get_by_path(feature, field) or ""
 				features.append(entry)
-				(edge_dir / f"{fid}.json").write_text(json.dumps(simplify_json(feature)))
+				(port_dir / f"{fid}.json").write_text(json.dumps(simplify_json(feature)))
 		if features:
-			edge_index[edge_id] = {"count": len(features), "features": features}
-	return edge_index
+			port_index[port_id] = {"count": len(features), "features": features}
+	return port_index
 
 def generate_html_report(output_dir):
 	template_path = Path(__file__).parent / "workflow_template.html"
@@ -66,9 +66,8 @@ def generate_html_report(output_dir):
 	with open(output_dir / "workflow.json") as f:
 		workflow_json = f.read()
 	html = html.replace("{{WORKFLOW_JSON}}", workflow_json.replace("\\", "\\\\").replace("`", "\\`"))
-	edge_index = collect_edge_index(output_dir / "runtime", output_dir)
-	html = html.replace("{{EDGE_INDEX}}", json.dumps(edge_index).replace("\\", "\\\\").replace("`", "\\`"))
-	html = html.replace("{{SEARCH_FIELDS}}", json.dumps(SEARCH_FIELDS))
+	port_index = collect_port_index(output_dir / "runtime", output_dir)
+	html = html.replace("{{PORT_INDEX}}", json.dumps(port_index).replace("\\", "\\\\").replace("`", "\\`"))
 	with open(output_dir / "workflow.html", "w") as f:
 		f.write(html)
 
