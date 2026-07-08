@@ -62,6 +62,10 @@
             <h3>Layers</h3>
             <div id="layersList"></div>
         </div>
+        <div id="attributesSection">
+            <h3>Attributes</h3>
+            <div id="attributesContent" style="font-size: 12px;">Click a feature to see its attributes.</div>
+        </div>
     </div>
     <script>
         let viewer;
@@ -72,10 +76,39 @@
         // Injected tile list
         const tilesetUrls = {{TILES_LIST}};
 
+        // EXPERIMENT: derive a flat shading normal from screen-space position
+        // derivatives instead of relying on a per-vertex NORMAL attribute.
+        const flatNormalShader = new Cesium.CustomShader({
+            lightingModel: Cesium.LightingModel.PBR,
+            fragmentShaderText: `
+                void fragmentMain(FragmentInput fsInput, inout czm_modelMaterial material) {
+                    vec3 positionEC = fsInput.attributes.positionEC;
+                    vec3 normalEC = normalize(cross(dFdx(positionEC), dFdy(positionEC)));
+                    material.normalEC = normalEC;
+                }
+            `
+        });
+
         (async function() {
             viewer = new Cesium.Viewer('cesiumContainer', {
-                terrainProvider: undefined
+                terrainProvider: undefined,
+                infoBox: false
             });
+
+            const attributesContent = document.getElementById('attributesContent');
+            const clickHandler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
+            clickHandler.setInputAction((movement) => {
+                const picked = viewer.scene.pick(movement.position);
+                if (picked && typeof picked.getPropertyIds === 'function') {
+                    const cellStyle = 'word-break: break-word; border: 1px solid #ccc; padding: 4px;';
+                    const rows = picked.getPropertyIds().map(id =>
+                        `<tr><td style="${cellStyle} font-weight: bold;">${id}</td><td style="${cellStyle}">${picked.getProperty(id)}</td></tr>`
+                    ).join('');
+                    attributesContent.innerHTML = `<table style="width: 100%; table-layout: fixed; border-collapse: collapse;"><tbody>${rows}</tbody></table>`;
+                } else {
+                    attributesContent.textContent = 'Click a feature to see its attributes.';
+                }
+            }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
 
             // Setup color expression input (Enter to apply)
             const colorExpressionInput = document.getElementById('colorExpression');
@@ -115,6 +148,7 @@
             const layerId = layerIdCounter++;
             try {
                 const tileset = await Cesium.Cesium3DTileset.fromUrl(url);
+                // tileset.customShader = flatNormalShader;
                 applyTilesetStyle(tileset);
                 viewer.scene.primitives.add(tileset);
                 return { layerId, tileset };
@@ -210,6 +244,7 @@
                         viewer.scene.primitives.remove(layerData.tileset);
                         try {
                             const newTileset = await Cesium.Cesium3DTileset.fromUrl(e.target.value);
+                            newTileset.customShader = flatNormalShader;
                             applyTilesetStyle(newTileset);
                             viewer.scene.primitives.add(newTileset);
                             layerData.tileset = newTileset;
