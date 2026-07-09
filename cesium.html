@@ -244,7 +244,7 @@
                         viewer.scene.primitives.remove(layerData.tileset);
                         try {
                             const newTileset = await Cesium.Cesium3DTileset.fromUrl(e.target.value);
-                            newTileset.customShader = flatNormalShader;
+                            // newTileset.customShader = flatNormalShader;
                             applyTilesetStyle(newTileset);
                             viewer.scene.primitives.add(newTileset);
                             layerData.tileset = newTileset;
