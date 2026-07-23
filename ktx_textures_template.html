@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>KTX2 / GLB Texture Viewer</title>
+<style>
+  body { margin: 0; font-family: sans-serif; background: #1e1e1e; color: #ddd; }
+  header { padding: 10px 16px; background: #2a2a2a; position: sticky; top: 0; z-index: 10; }
+  header label { margin-right: 16px; font-size: 13px; }
+  #status { font-size: 13px; color: #9cf; }
+  #grid { display: flex; flex-wrap: wrap; gap: 16px; padding: 16px; }
+  .cell { background: #262626; border: 1px solid #333; border-radius: 6px; padding: 8px; }
+  .cell canvas { display: block; image-rendering: pixelated; cursor: zoom-in;
+    background-image:
+      linear-gradient(45deg, #555 25%, transparent 25%),
+      linear-gradient(-45deg, #555 25%, transparent 25%),
+      linear-gradient(45deg, transparent 75%, #555 75%),
+      linear-gradient(-45deg, transparent 75%, #555 75%);
+    background-size: 16px 16px;
+    background-position: 0 0, 0 8px, 8px -8px, -8px 0px; }
+  .meta { font-size: 12px; margin-top: 6px; line-height: 1.4; }
+  .meta .name { font-weight: bold; word-break: break-all; }
+  .meta .err { color: #f88; }
+  #overlay { display: none; position: fixed; inset: 0; z-index: 100; background: rgba(0,0,0,0.85);
+    align-items: center; justify-content: center; cursor: zoom-out; }
+  #overlay canvas { image-rendering: pixelated; max-width: 96vw; max-height: 96vh;
+    background-image:
+      linear-gradient(45deg, #555 25%, transparent 25%),
+      linear-gradient(-45deg, #555 25%, transparent 25%),
+      linear-gradient(45deg, transparent 75%, #555 75%),
+      linear-gradient(-45deg, transparent 75%, #555 75%);
+    background-size: 16px 16px;
+    background-position: 0 0, 0 8px, 8px -8px, -8px 0px; }
+</style>
+</head>
+<body>
+<header>
+  <label>Preview size: <input type="range" id="size" min="64" max="512" value="256" step="16"></label>
+  <label><input type="checkbox" id="linear"> linear filter</label>
+  <span id="status"></span>
+</header>
+<div id="grid"></div>
+<div id="overlay"><canvas id="overlayCanvas"></canvas></div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from "three";
+import { KTX2Loader } from "three/addons/loaders/KTX2Loader.js";
+
+const TEXTURES = {{TEXTURES}};
+const BASIS_PATH = "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/libs/basis/";
+
+const statusEl = document.getElementById("status");
+const grid = document.getElementById("grid");
+const sizeInput = document.getElementById("size");
+const linearInput = document.getElementById("linear");
+
+// One shared renderer; each cell is rendered then blitted into its own 2D canvas.
+const renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true, preserveDrawingBuffer: true });
+const ktx2 = new KTX2Loader().setTranscoderPath(BASIS_PATH).detectSupport(renderer);
+const scene = new THREE.Scene();
+const camera = new THREE.OrthographicCamera(-0.5, 0.5, 0.5, -0.5, -1, 1);
+const quad = new THREE.Mesh(
+  new THREE.PlaneGeometry(1, 1),
+  new THREE.MeshBasicMaterial({ transparent: true })
+);
+scene.add(quad);
+
+function b64ToArrayBuffer(b64) {
+  const bin = atob(b64);
+  const buf = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+  return buf.buffer;
+}
+
+function loadTexture(t) {
+  const buf = b64ToArrayBuffer(t.b64);
+  const blob = new Blob([buf], { type: t.mime });
+  const url = URL.createObjectURL(blob);
+  const loader = t.mime === "image/ktx2" ? ktx2 : new THREE.TextureLoader();
+  return new Promise((resolve, reject) => {
+    loader.load(url, tex => { URL.revokeObjectURL(url); resolve(tex); }, undefined, reject);
+  });
+}
+
+const cells = TEXTURES.map(t => {
+  const cell = document.createElement("div");
+  cell.className = "cell";
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d");
+  const meta = document.createElement("div");
+  meta.className = "meta";
+  cell.append(canvas, meta);
+  grid.append(cell);
+  const c = { t, canvas, ctx, meta, tex: null, w: 0, h: 0, err: null };
+  canvas.addEventListener("click", () => { if (c.tex) maximize(c); });
+  return c;
+});
+
+const overlay = document.getElementById("overlay");
+const overlayCtx = document.getElementById("overlayCanvas").getContext("2d");
+overlay.addEventListener("click", () => { overlay.style.display = "none"; });
+function maximize(c) {
+  blit(c.tex, overlayCtx, c.w || +sizeInput.value, c.h || +sizeInput.value);
+  overlay.style.display = "flex";
+}
+
+function blit(tex, ctx, w, h) {
+  tex.minFilter = linearInput.checked ? THREE.LinearFilter : THREE.NearestFilter;
+  tex.magFilter = linearInput.checked ? THREE.LinearFilter : THREE.NearestFilter;
+  tex.needsUpdate = true;
+  quad.material.map = tex;
+  quad.material.needsUpdate = true;
+  renderer.setSize(w, h, false);
+  renderer.setClearColor(0x000000, 0);
+  renderer.clear();
+  renderer.render(scene, camera);
+  ctx.canvas.width = w;
+  ctx.canvas.height = h;
+  ctx.clearRect(0, 0, w, h);
+  ctx.drawImage(renderer.domElement, 0, 0);
+}
+
+function renderCell(c) {
+  const s = +sizeInput.value;
+  c.canvas.width = s;
+  c.canvas.height = s;
+  const nameLine = `<div class="name">${c.t.file} &rsaquo; ${c.t.name}</div>`;
+  if (c.err) {
+    c.meta.innerHTML = nameLine + `<div class="err">${c.err}</div>`;
+    return;
+  }
+  if (!c.tex) return;
+  blit(c.tex, c.ctx, s, s);
+  c.meta.innerHTML = nameLine +
+    `<div>${c.t.mime} &middot; ${c.w}&times;${c.h} &middot; ${(c.t.bytes / 1024).toFixed(1)} KiB</div>`;
+}
+
+function renderAll() { cells.forEach(renderCell); }
+sizeInput.addEventListener("input", renderAll);
+linearInput.addEventListener("change", renderAll);
+
+let done = 0;
+for (const c of cells) {
+  try {
+    const tex = await loadTexture(c.t);
+    c.tex = tex;
+    c.w = tex.image?.width ?? tex.source?.data?.width ?? 0;
+    c.h = tex.image?.height ?? tex.source?.data?.height ?? 0;
+  } catch (e) {
+    c.err = String(e && e.message || e);
+  }
+  done++;
+  statusEl.textContent = `loaded ${done}/${cells.length}`;
+  renderCell(c);
+}
+statusEl.textContent = `done: ${cells.length} texture(s)`;
+</script>
+</body>
+</html>
