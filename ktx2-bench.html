@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>KTX2 Codec Benchmark</title>
+  <script src="https://cesium.com/downloads/cesiumjs/releases/1.121/Build/Cesium/Cesium.js"></script>
+  <link href="https://cesium.com/downloads/cesiumjs/releases/1.121/Build/Cesium/Widgets/widgets.css" rel="stylesheet" />
+  <style>
+    html, body, #cesiumContainer { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; }
+    #status {
+      position: absolute; top: 8px; left: 8px; z-index: 10;
+      background: rgba(0,0,0,0.75); color: #0f0; font: 13px monospace;
+      padding: 10px 14px; white-space: pre; border-radius: 4px; max-height: 90%; overflow: auto;
+    }
+  </style>
+</head>
+<body>
+  <div id="cesiumContainer"></div>
+  <div id="status">initializing...</div>
+  <script>
+    // ---- hard-coded config ----------------------------------------------
+    // localhost:8080 serves $HOME (/home/tsq)
+    const BASE = "http://localhost:8080/Projects/reearth-flow/engine/tmp";
+    const TILESETS = [
+      { codec: "jpg",   url: `${BASE}/frn_jpg/tileset.json` },
+      { codec: "etc1s", url: `${BASE}/frn_etc1s/tileset.json` },
+      { codec: "uastc", url: `${BASE}/frn_uastc/tileset.json` },
+    ];
+    // How many times to repeat the full 3-codec sequence, for averaging.
+    const REPEATS = 5;
+    // Number of consecutive idle frames required to declare "fully loaded".
+    const IDLE_FRAMES = 30;
+    // Safety timeout per tileset (ms).
+    const LOAD_TIMEOUT = 15 * 60 * 1000;
+    // ---------------------------------------------------------------------
+
+    const statusEl = document.getElementById("status");
+    const log = (m) => { statusEl.textContent = m; console.log(m); };
+
+    // ---- GPU timing via WebGL2 timer query ------------------------------
+    // Wraps each Cesium frame in a TIME_ELAPSED query and reads results back
+    // a few frames later. Gives real GPU ms/frame (not just wall-clock).
+    function makeGpuTimer(scene) {
+      const gl = scene.context._gl;
+      const ext = gl.getExtension("EXT_disjoint_timer_query_webgl2");
+      if (!ext) return { supported: false, pre() {}, post() {}, samples: [] };
+      const TIME_ELAPSED = ext.TIME_ELAPSED_EXT;
+      const pending = [];   // {q, t}
+      const samples = [];   // {t, gpuMs}
+      let active = null;
+      const pre = (t) => {
+        if (active) return;               // only one TIME_ELAPSED query at a time
+        active = gl.createQuery();
+        gl.beginQuery(TIME_ELAPSED, active);
+        active.__t = t;
+      };
+      const post = () => {
+        if (active) { gl.endQuery(TIME_ELAPSED); pending.push({ q: active, t: active.__t }); active = null; }
+        const disjoint = gl.getParameter(ext.GPU_DISJOINT_EXT);
+        for (let i = pending.length - 1; i >= 0; i--) {
+          const { q, t } = pending[i];
+          const avail = gl.getQueryParameter(q, gl.QUERY_RESULT_AVAILABLE);
+          if (avail || disjoint) {
+            if (avail && !disjoint) samples.push({ t: Math.round(t), gpuMs: +(gl.getQueryParameter(q, gl.QUERY_RESULT) / 1e6).toFixed(2) });
+            gl.deleteQuery(q);
+            pending.splice(i, 1);
+          }
+        }
+      };
+      return { supported: true, pre, post, samples };
+    }
+
+    // Samples per-frame counters + frame duration + GPU ms, so we can
+    // decompose the load into network / cpu / gpu phases afterwards.
+    function waitFullyLoaded(scene, tileset, gpuTimer) {
+      return new Promise((resolve, reject) => {
+        const t0 = performance.now();
+        let idle = 0, lastFrame = t0, firstContentT = null;
+        const samples = [];   // {t, pending, processing, ready, frameMs}
+        const pre = scene.preRender.addEventListener(() => gpuTimer.pre(performance.now() - t0));
+        const post = scene.postRender.addEventListener(() => {
+          gpuTimer.post();
+          const now = performance.now();
+          const t = now - t0, frameMs = now - lastFrame;
+          lastFrame = now;
+          const s = tileset._statistics || {};
+          const pending = s.numberOfPendingRequests ?? 1;
+          const processing = s.numberOfTilesProcessing ?? 1;
+          const ready = s.numberOfTilesWithContentReady ?? 0;
+          if (firstContentT === null && ready > 0) firstContentT = t;
+          samples.push({ t: Math.round(t), pending, processing, ready, frameMs: +frameMs.toFixed(1) });
+          if (pending === 0 && processing === 0) idle++; else idle = 0;
+          if (idle >= IDLE_FRAMES) { pre(); post(); resolve({ samples, firstContentT }); }
+          else if (now - t0 > LOAD_TIMEOUT) { pre(); post(); reject(new Error("load timeout")); }
+        });
+      });
+    }
+
+    // ---- network: Resource Timing for one run's window ------------------
+    function networkStats(folder, sinceEpoch) {
+      const items = performance.getEntriesByType("resource").filter(
+        (e) => e.name.includes(folder) && e.startTime >= sinceEpoch - 1
+      );
+      let queuedSum = 0, ttfbSum = 0, dlSum = 0, transfer = 0, encoded = 0;
+      const spans = [];
+      for (const e of items) {
+        // queued/stalled ≈ time between the browser deciding to fetch and the request actually going out
+        const queued = Math.max(0, (e.requestStart || e.fetchStart) - e.fetchStart);
+        const ttfb = Math.max(0, e.responseStart - (e.requestStart || e.fetchStart));
+        const dl = Math.max(0, e.responseEnd - e.responseStart);
+        queuedSum += queued; ttfbSum += ttfb; dlSum += dl;
+        transfer += e.transferSize || 0; encoded += e.encodedBodySize || 0;
+        spans.push([e.fetchStart, e.responseEnd]);
+      }
+      // peak concurrency: max overlapping [fetchStart, responseEnd] intervals
+      const ev = [];
+      for (const [a, b] of spans) { ev.push([a, 1]); ev.push([b, -1]); }
+      ev.sort((x, y) => x[0] - y[0] || x[1] - y[1]);
+      let cur = 0, peak = 0;
+      for (const [, d] of ev) { cur += d; if (cur > peak) peak = cur; }
+      const n = items.length || 1;
+      return {
+        requestCount: items.length,
+        transferMB: +(transfer / 1048576).toFixed(1),
+        encodedMB: +(encoded / 1048576).toFixed(1),
+        peakConcurrency: peak,
+        avgQueuedMs: +(queuedSum / n).toFixed(2),
+        avgTtfbMs: +(ttfbSum / n).toFixed(2),
+        avgDownloadMs: +(dlSum / n).toFixed(2),
+        totalQueuedMs: Math.round(queuedSum),
+        totalTtfbMs: Math.round(ttfbSum),
+        totalDownloadMs: Math.round(dlSum),
+      };
+    }
+
+    // Reduce per-frame + gpu streams to a compact, copyable summary.
+    function summarize(samples, gpuSamples, firstContentT) {
+      const sorted = (arr) => arr.slice().sort((a, b) => a - b);
+      const pctOf = (arr, p) => arr.length ? +sorted(arr)[Math.floor((arr.length - 1) * p)].toFixed(1) : null;
+      const frames = samples.slice(1).map((s) => s.frameMs);
+      const gpu = gpuSamples.map((s) => s.gpuMs);
+      const drainT = (key) => { for (let i = samples.length - 1; i >= 0; i--) if (samples[i][key] > 0) return Math.round(samples[i].t); return 0; };
+      const maxOf = (key) => samples.reduce((m, s) => Math.max(m, s[key]), 0);
+      const timeline = [];
+      let bucket = -1;
+      for (const s of samples) { const b = Math.floor(s.t / 250); if (b !== bucket) { bucket = b; timeline.push(s); } }
+      return {
+        timeToFirstContentMs: firstContentT != null ? Math.round(firstContentT) : null,
+        requestsDoneMs: drainT("pending"),
+        processingDoneMs: drainT("processing"),
+        maxPending: maxOf("pending"),
+        maxProcessing: maxOf("processing"),
+        frameMsP50: pctOf(frames, 0.5), frameMsP95: pctOf(frames, 0.95), frameMsMax: frames.length ? +sorted(frames).pop().toFixed(1) : null,
+        gpuMsP50: pctOf(gpu, 0.5), gpuMsP95: pctOf(gpu, 0.95), gpuMsMax: gpu.length ? +sorted(gpu).pop().toFixed(1) : null,
+        gpuMsTotal: gpu.length ? +gpu.reduce((a, b) => a + b, 0).toFixed(1) : null,
+        gpuSupported: gpuSamples.length > 0,
+        frameCount: samples.length,
+        timeline,
+      };
+    }
+
+    async function benchOne(viewer, entry, longTasks) {
+      log(`loading ${entry.codec} ...`);
+      const runStart = performance.now();
+      const folder = entry.url.split("/").slice(-2)[0];   // e.g. frn_jpg
+      const ltBase = longTasks.reduce((a, b) => a + b.duration, 0);
+      const gpuTimer = makeGpuTimer(viewer.scene);
+
+      const t0 = performance.now();
+      const tileset = await Cesium.Cesium3DTileset.fromUrl(entry.url, {
+        // do not let the cache evict anything: keep all loaded tiles resident
+        cacheBytes: 4 * 1024 * 1024 * 1024,
+        maximumCacheOverflowBytes: 4 * 1024 * 1024 * 1024,
+      });
+      viewer.scene.primitives.add(tileset);
+      await viewer.zoomTo(tileset);       // identical framing across codecs (same geometry)
+      const { samples, firstContentT } = await waitFullyLoaded(viewer.scene, tileset, gpuTimer);
+      const loadMs = performance.now() - t0;
+
+      const s = tileset._statistics || {};
+      const mainThreadBlockingMs = Math.round(longTasks.reduce((a, b) => a + b.duration, 0) - ltBase);
+      const result = {
+        codec: entry.codec,
+        loadSeconds: +(loadMs / 1000).toFixed(2),
+        totalMemoryMB: +(tileset.totalMemoryUsageInBytes / 1048576).toFixed(1),
+        geometryMemoryMB: s.geometryByteLength != null ? +(s.geometryByteLength / 1048576).toFixed(1) : null,
+        textureMemoryMB: s.texturesByteLength != null ? +(s.texturesByteLength / 1048576).toFixed(1) : null,
+        batchTableMemoryMB: s.batchTableByteLength != null ? +(s.batchTableByteLength / 1048576).toFixed(1) : null,
+        tilesReady: s.numberOfTilesWithContentReady ?? null,
+        // --- load decomposition ---
+        network: networkStats(folder, runStart),
+        mainThreadBlockingMs,     // CPU on main thread (Long Tasks); worker transcode NOT included
+        ...summarize(samples, gpuTimer.samples, firstContentT),
+      };
+
+      viewer.scene.primitives.remove(tileset);
+      // let the GPU release before the next run
+      await new Promise((r) => setTimeout(r, 3000));
+      return result;
+    }
+
+    async function main() {
+      const viewer = new Cesium.Viewer("cesiumContainer", {
+        requestRenderMode: false,
+        baseLayerPicker: false,
+        geocoder: false,
+        timeline: false,
+        animation: false,
+      });
+      viewer.scene.globe.depthTestAgainstTerrain = false;
+
+      // resource timing buffer must hold ~1000 entries per run
+      if (performance.setResourceTimingBufferSize) performance.setResourceTimingBufferSize(20000);
+
+      // main-thread CPU: collect long tasks (>50ms blocks) for the whole session
+      const longTasks = [];
+      try {
+        new PerformanceObserver((list) => { for (const e of list.getEntries()) longTasks.push({ start: e.startTime, duration: e.duration }); })
+          .observe({ entryTypes: ["longtask"] });
+      } catch (e) { console.warn("longtask observer unsupported", e); }
+
+      // Fields to aggregate across repeats (scalar metrics only).
+      const AGG = ["loadSeconds", "totalMemoryMB", "textureMemoryMB", "geometryMemoryMB",
+        "processingDoneMs", "requestsDoneMs", "timeToFirstContentMs",
+        "gpuMsTotal", "frameMsP50", "mainThreadBlockingMs", "tilesReady"];
+
+      // runs[codec] = [per-run result, ...]
+      const runs = {};
+      for (const t of TILESETS) runs[t.codec] = [];
+
+      for (let rep = 0; rep < REPEATS; rep++) {
+        for (const entry of TILESETS) {
+          try {
+            const r = await benchOne(viewer, entry, longTasks);
+            delete r.timeline;              // too bulky to keep for every rep
+            runs[entry.codec].push(r);
+          } catch (e) {
+            runs[entry.codec].push({ codec: entry.codec, error: String(e) });
+          }
+          log(`rep ${rep + 1}/${REPEATS}  ${entry.codec}: done`);
+        }
+      }
+
+      const mean = (xs) => xs.reduce((a, b) => a + b, 0) / xs.length;
+      const std = (xs) => { const m = mean(xs); return Math.sqrt(mean(xs.map((x) => (x - m) ** 2))); };
+      const summary = TILESETS.map((t) => {
+        const rs = runs[t.codec].filter((r) => !r.error);
+        const agg = { codec: t.codec, samples: rs.length };
+        for (const k of AGG) {
+          const xs = rs.map((r) => r[k]).filter((v) => typeof v === "number");
+          if (!xs.length) continue;
+          agg[k] = { mean: +mean(xs).toFixed(2), std: +std(xs).toFixed(2), min: Math.min(...xs), max: Math.max(...xs) };
+        }
+        return agg;
+      });
+
+      const out = {
+        cesiumVersion: Cesium.VERSION,
+        repeats: REPEATS,
+        gpu: (() => {
+          const gl = viewer.scene.context._gl;
+          const dbg = gl.getExtension("WEBGL_debug_renderer_info");
+          return dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : "unknown";
+        })(),
+        summary,      // mean / std / min / max per codec
+        runs,         // every individual run
+      };
+      console.log("=== BENCHMARK RESULT (copy the JSON below) ===");
+      console.log(JSON.stringify(out, null, 2));
+      window.BENCH_RESULT = out;
+      log("DONE. Result in console and window.BENCH_RESULT\n\n" + JSON.stringify(summary, null, 2));
+    }
+
+    main();
+  </script>
+</body>
+</html>
