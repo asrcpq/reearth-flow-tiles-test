@@ -12,19 +12,36 @@
       background: rgba(0,0,0,0.75); color: #0f0; font: 13px monospace;
       padding: 10px 14px; white-space: pre; border-radius: 4px; max-height: 90%; overflow: auto;
     }
+    #caps {
+      position: absolute; top: 8px; right: 8px; z-index: 10;
+      background: rgba(0,0,0,0.85); color: #ddd; font: 12px monospace;
+      padding: 10px 14px; white-space: pre; border-radius: 4px; max-width: 46%;
+      max-height: 90%; overflow: auto;
+    }
+    #caps h3 { margin: 0 0 6px; color: #6cf; font-size: 13px; }
+    #caps .ok  { color: #6f6; }
+    #caps .no  { color: #f66; }
+    #startBtn {
+      display: block; margin-top: 12px; width: 100%;
+      background: #2a6; color: #fff; border: none; border-radius: 4px;
+      padding: 9px 12px; font: bold 13px monospace; cursor: pointer;
+    }
+    #startBtn:hover { background: #38c; }
+    #startBtn:disabled { background: #555; cursor: default; }
   </style>
 </head>
 <body>
   <div id="cesiumContainer"></div>
   <div id="status">initializing...</div>
+  <div id="caps">detecting GPU...</div>
   <script>
     // ---- hard-coded config ----------------------------------------------
     // localhost:8080 serves $HOME (/home/tsq)
     const BASE = "http://localhost:8080/Projects/reearth-flow/engine/tmp";
     const TILESETS = [
-      { codec: "jpg",   url: `${BASE}/frn_jpg/tileset.json` },
-      { codec: "etc1s", url: `${BASE}/frn_etc1s/tileset.json` },
-      { codec: "uastc", url: `${BASE}/frn_uastc/tileset.json` },
+      { codec: "jpg",   url: `${BASE}/frn_jpg/gml-to-3dtiles/tileset.json` },
+      { codec: "etc1s", url: `${BASE}/frn_etc1s/gml-to-3dtiles/tileset.json` },
+      { codec: "uastc", url: `${BASE}/frn_uastc/gml-to-3dtiles/tileset.json` },
     ];
     // How many times to repeat the full 3-codec sequence, for averaging.
     const REPEATS = 5;
@@ -35,7 +52,54 @@
     // ---------------------------------------------------------------------
 
     const statusEl = document.getElementById("status");
+    const capsEl = document.getElementById("caps");
     const log = (m) => { statusEl.textContent = m; console.log(m); };
+
+    // ---- GPU capabilities: which compressed texture formats are supported --
+    // KTX2 tiles decode to a GPU-native format at load time; which one depends
+    // on what this GPU/browser supports. Report them before running the bench.
+    function showGpuCapabilities() {
+      const canvas = document.createElement("canvas");
+      const gl = canvas.getContext("webgl2") || canvas.getContext("webgl");
+      if (!gl) { capsEl.textContent = "WebGL not available"; return; }
+
+      const dbg = gl.getExtension("WEBGL_debug_renderer_info");
+      const renderer = dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : "unknown";
+      const vendor = dbg ? gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL) : "unknown";
+
+      // Format families relevant to KTX2 (ETC1S/UASTC transcode targets).
+      const FORMATS = [
+        ["ASTC (UASTC ideal)", "WEBGL_compressed_texture_astc"],
+        ["ETC / ETC2 (ETC1S mobile)", "WEBGL_compressed_texture_etc"],
+        ["ETC1", "WEBGL_compressed_texture_etc1"],
+        ["S3TC / DXT (ETC1S->BC1/BC3)", "WEBGL_compressed_texture_s3tc"],
+        ["S3TC sRGB", "WEBGL_compressed_texture_s3tc_srgb"],
+        ["BPTC / BC7 (UASTC->BC7)", "EXT_texture_compression_bptc"],
+        ["RGTC / BC4-BC5", "EXT_texture_compression_rgtc"],
+        ["PVRTC (iOS)", "WEBGL_compressed_texture_pvrtc"],
+      ];
+
+      const lines = FORMATS.map(([label, ext]) => {
+        const ok = !!gl.getExtension(ext);
+        return `<span class="${ok ? "ok" : "no"}">${ok ? "✔" : "✘"}</span> ${label}`;
+      });
+
+      capsEl.innerHTML =
+        `<h3>GPU capabilities</h3>` +
+        `WebGL:   ${gl instanceof WebGL2RenderingContext ? "2" : "1"}\n` +
+        `Vendor:  ${vendor}\n` +
+        `Renderer:${renderer}\n\n` +
+        `Compressed texture formats:\n` +
+        lines.join("\n") +
+        `\n<button id="startBtn">▶ Start test</button>`;
+
+      const btn = document.getElementById("startBtn");
+      btn.addEventListener("click", () => {
+        btn.disabled = true;
+        btn.textContent = "running...";
+        main();
+      });
+    }
 
     // ---- GPU timing via WebGL2 timer query ------------------------------
     // Wraps each Cesium frame in a TIME_ELAPSED query and reads results back
@@ -271,7 +335,8 @@
       log("DONE. Result in console and window.BENCH_RESULT\n\n" + JSON.stringify(summary, null, 2));
     }
 
-    main();
+    log("ready — review GPU capabilities, then click Start test.");
+    showGpuCapabilities();
   </script>
 </body>
 </html>
