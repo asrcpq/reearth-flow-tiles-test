@@ -66,6 +66,14 @@
             <h3>Attributes</h3>
             <div id="attributesContent" style="font-size: 12px;">Click a feature to see its attributes.</div>
         </div>
+        <div id="cameraExportSection">
+            <h3>Camera Export (raster3d)</h3>
+            <div style="margin-bottom: 5px;">
+                <input type="text" id="cameraName" value="cam1" placeholder="camera name" style="width: 100%; box-sizing: border-box;">
+            </div>
+            <button id="dumpCameraBtn" style="margin-bottom: 5px;">Dump camera</button>
+            <textarea id="cameraDump" readonly style="width: 100%; height: 140px; box-sizing: border-box; font-family: monospace; font-size: 11px;" placeholder="Point the view, then click Dump camera. Copy the snippet into profile.toml's [convs.raster3d.<id>.cameras] table."></textarea>
+        </div>
     </div>
     <script>
         let viewer;
@@ -142,7 +150,51 @@
                     viewer.zoomTo(firstLayer.tileset);
                 }
             }
+
+            document.getElementById('dumpCameraBtn').addEventListener('click', () => {
+                const name = document.getElementById('cameraName').value.trim() || 'cam1';
+                document.getElementById('cameraDump').value = dumpCameraToml(name);
+            });
         })();
+
+        // Reads the live Cesium camera and formats it as a [convs.raster3d.<id>.cameras.<name>]
+        // TOML snippet matching profile_config::CameraConfig (ECEF xyz position/look_at/up).
+        // `look_at` is placed at the picked surface point under screen center so its distance
+        // is physically meaningful (also used to scale near/far); if nothing is under the
+        // cursor (e.g. looking at sky), falls back to an arbitrary point along the view direction.
+        function dumpCameraToml(name) {
+            const camera = viewer.camera;
+            const canvas = viewer.scene.canvas;
+            const center = new Cesium.Cartesian2(canvas.clientWidth / 2, canvas.clientHeight / 2);
+
+            let target = viewer.scene.pickPosition(center);
+            let distance;
+            if (Cesium.defined(target)) {
+                distance = Cesium.Cartesian3.distance(camera.positionWC, target);
+            } else {
+                distance = 500;
+                target = Cesium.Cartesian3.add(
+                    camera.positionWC,
+                    Cesium.Cartesian3.multiplyByScalar(camera.directionWC, distance, new Cesium.Cartesian3()),
+                    new Cesium.Cartesian3()
+                );
+            }
+
+            const near = Math.max(0.1, distance * 0.01);
+            const far = distance * 10;
+            const fovYDeg = Cesium.Math.toDegrees(camera.frustum.fovy);
+
+            const fmtVec = (v) => `[${v.x.toFixed(3)}, ${v.y.toFixed(3)}, ${v.z.toFixed(3)}]`;
+
+            return `[convs.raster3d.<id>.cameras.${name}]
+position = ${fmtVec(camera.positionWC)}
+look_at = ${fmtVec(target)}
+up = ${fmtVec(camera.upWC)}
+fov_y_deg = ${fovYDeg.toFixed(2)}
+near = ${near.toFixed(2)}
+far = ${far.toFixed(2)}
+`;
+        }
 
         async function createTilesetLayer(url, colorIndex) {
             const layerId = layerIdCounter++;
