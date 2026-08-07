@@ -3,7 +3,7 @@ import json, sys, os
 from pathlib import Path
 from subprocess import run
 
-SEARCH_FIELDS = [".id", ".attributes.gml_id", ".metadata.featureType", ".attributes.lod"]
+SEARCH_FIELDS = [".attributes.gml_id", ".metadata.featureType", ".attributes.lod"]
 
 def get_by_path(obj, path):
 	"""Get value from obj by dot-separated path like '.id' or '.attributes.gml_id'"""
@@ -44,17 +44,19 @@ def collect_port_index(job_dir, output_dir):
 		port_dir.mkdir(parents=True)
 		features = []
 		with open(jsonl_file) as f:
-			for line in f:
+			for line_no, line in enumerate(f):
 				line = line.strip()
 				if not line:
 					continue
 				feature = json.loads(line)
-				fid = feature.get("id", "")
-				entry = {"id": fid}
+				# `id` is deprecated as a feature key (and isn't unique: multiple
+				# lines, e.g. splitter output, can share one source feature's id).
+				# `_idx` (the line number) is the on-disk key instead.
+				entry = {"_idx": line_no}
 				for field in SEARCH_FIELDS:
 					entry[field] = get_by_path(feature, field) or ""
 				features.append(entry)
-				(port_dir / f"{fid}.json").write_text(json.dumps(simplify_json(feature)))
+				(port_dir / f"{line_no}.json").write_text(json.dumps(simplify_json(feature)))
 		if features:
 			port_index[port_id] = {"count": len(features), "features": features}
 	return port_index

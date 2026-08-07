@@ -97,9 +97,12 @@
             `
         });
 
+        Cesium.Ion.defaultAccessToken = '';
+
         (async function() {
             viewer = new Cesium.Viewer('cesiumContainer', {
                 terrainProvider: undefined,
+                baseLayer: false,
                 infoBox: false
             });
 

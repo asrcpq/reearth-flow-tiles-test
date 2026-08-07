@@ -1,0 +1,9 @@
+# how to write change list (for commit message and PR)
+
+1. short sentences (in average ~120 chars). do not explain anything (motivation, outcome). this is only a change index.
+2. group changes of similar domain together
+3. write relative path quoted in backtick at the beginning, the path is just for quick understanding of location, no need to cover all changed files (like generated files) if there is a lot, to keep line short.
+4. one semantic change should be one item
+5. do not miss any semantic change
+6. no need for chores like version bump, schema generation, comment/typo fix
+7. avoid non-ascii

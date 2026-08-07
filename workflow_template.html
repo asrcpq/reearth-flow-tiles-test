@@ -95,8 +95,8 @@ function updateSvgSize(){
 }
 updateSvgSize();
 
-async function fetchFeature(edgeId, featureId) {
-  const response = await fetch(`simplified_portdata/${edgeId}/${featureId}.json`);
+async function fetchFeature(edgeId, idx) {
+  const response = await fetch(`simplified_portdata/${edgeId}/${idx}.json`);
   return JSON.parse(await response.text(), jsonReviver);
 }
 
@@ -190,7 +190,7 @@ async function loadMoreFeatures(){
   if(!featureList) return;
   const endIndex = Math.min(displayedCount + BATCH_SIZE, currentDisplayFeatures.length);
   const batch = currentDisplayFeatures.slice(displayedCount, endIndex);
-  const features = await Promise.all(batch.map(f => fetchFeature(currentEdgeId, f.id)));
+  const features = await Promise.all(batch.map(f => fetchFeature(currentEdgeId, f._idx)));
 
   let html = '';
   for(const feature of features){
